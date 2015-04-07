@@ -1,5 +1,5 @@
 /*
-    ChibiOS - Copyright (C) 2006..2015 Giovanni Di Sirio
+    ChibiOS - Copyright (C) 2013-2015 Fabio Utzig
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -244,29 +244,6 @@ typedef struct
  */
 #define pal_lld_setgroupmode(port, mask, offset, mode)                      \
   _pal_lld_setgroupmode(port, mask << offset, mode)
-
-/**
- * @brief   Writes a logical state on an output pad.
- * @note    This function is not meant to be invoked directly by the
- *          application  code.
- * @note    The @ref PAL provides a default software implementation of this
- *          functionality, implement this function if can optimize it by using
- *          special hardware functionalities or special coding.
- *
- * @param[in] port      port identifier
- * @param[in] pad       pad number within the port
- * @param[in] bit       logical value, the value must be @p PAL_LOW or
- *                      @p PAL_HIGH
- *
- * @notapi
- */
-#define pal_lld_writepad(port, pad, bit)                                    \
-  do {                                                                      \
-    if (bit)                                                                \
-      pal_lld_setpad(port, pad);                                            \
-    else                                                                    \
-      pal_lld_clearpad(port, pad);                                          \
-  } while(0)
 
 /**
  * @brief   Sets a pad logical state to @p PAL_HIGH.

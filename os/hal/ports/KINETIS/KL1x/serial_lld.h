@@ -65,21 +65,21 @@
  * @brief   UART0 interrupt priority level setting.
  */
 #if !defined(KINETIS_SERIAL_UART0_PRIORITY) || defined(__DOXYGEN__)
-#define KINETIS_SERIAL_UART0_PRIORITY        12
+#define KINETIS_SERIAL_UART0_PRIORITY        3
 #endif
 
 /**
  * @brief   UART1 interrupt priority level setting.
  */
 #if !defined(KINETIS_SERIAL_UART1_PRIORITY) || defined(__DOXYGEN__)
-#define KINETIS_SERIAL_UART1_PRIORITY        12
+#define KINETIS_SERIAL_UART1_PRIORITY        3
 #endif
 
 /**
  * @brief   UART2 interrupt priority level setting.
  */
 #if !defined(KINETIS_SERIAL_UART2_PRIORITY) || defined(__DOXYGEN__)
-#define KINETIS_SERIAL_UART2_PRIORITY        12
+#define KINETIS_SERIAL_UART2_PRIORITY        3
 #endif
 
 /** @} */
@@ -124,7 +124,7 @@ typedef struct {
   uint8_t                   ob[SERIAL_BUFFERS_SIZE];                        \
   /* End of the mandatory fields.*/                                         \
   /* Pointer to the UART registers block.*/                                 \
-  UARTLP_TypeDef            *uart;
+  UART_TypeDef            *uart;
 
 /*===========================================================================*/
 /* Driver macros.                                                            */

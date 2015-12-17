@@ -77,7 +77,7 @@ static const SerialConfig default_config = {
  * @param[in] sdp       communication channel associated to the UART
  */
 static void serve_interrupt(SerialDriver *sdp) {
-  UARTLP_TypeDef *u = sdp->uart;
+  UART_TypeDef *u = sdp->uart;
 
   if (u->S1 & UARTx_S1_RDRF) {
     osalSysLockFromISR();
@@ -99,19 +99,37 @@ static void serve_interrupt(SerialDriver *sdp) {
       osalSysLockFromISR();
       chnAddFlagsI(sdp, CHN_OUTPUT_EMPTY);
       osalSysUnlockFromISR();
-      u->C2 &= ~UARTx_C2_TIE;
+      u->C2 &= ~UARTx_C2_TCIE;
     } else {
        u->D = b;
     }
   }
 
-  if (u->S1 & UARTx_S1_IDLE)
-    u->S1 = UARTx_S1_IDLE;  // Clear IDLE (S1 bits are write-1-to-clear).
+  if (u->S1 & UARTx_S1_IDLE) {
+#if KINETIS_SERIAL_USE_UART0
+    if (sdp == &SD1)
+      u->S1 = UARTx_S1_IDLE;  // Clear IDLE (S1 bits are write-1-to-clear).
+    else
+#endif /* KINETIS_SERIAL_USE_UART0 */
+    {
+      (void)u->S1;
+      (void)u->D;
+    }
+  }
 
   if (u->S1 & (UARTx_S1_OR | UARTx_S1_NF | UARTx_S1_FE | UARTx_S1_PF)) {
     // FIXME: need to add set_error()
     // Clear flags (S1 bits are write-1-to-clear).
-    u->S1 = UARTx_S1_OR | UARTx_S1_NF | UARTx_S1_FE | UARTx_S1_PF;
+#if KINETIS_SERIAL_USE_UART0
+    if (sdp == &SD1)
+      u->S1 = UARTx_S1_OR | UARTx_S1_NF | UARTx_S1_FE | UARTx_S1_PF;
+    // Clear flags on other UART
+    else
+#endif
+    {
+      (void)u->S1;
+      (void)u->D;
+    }
   }
 }
 
@@ -119,7 +137,7 @@ static void serve_interrupt(SerialDriver *sdp) {
  * @brief   Attempts a TX preload
  */
 static void preload(SerialDriver *sdp) {
-  UARTLP_TypeDef *u = sdp->uart;
+  UART_TypeDef *u = sdp->uart;
 
   if (u->S1 & UARTx_S1_TDRE) {
     msg_t b = chOQGetI(&sdp->oqueue);
@@ -128,7 +146,7 @@ static void preload(SerialDriver *sdp) {
       return;
     }
     u->D = b;
-    u->C2 |= UARTx_C2_TIE;
+    u->C2 |= UARTx_C2_TCIE;
   }
 }
 
@@ -163,13 +181,21 @@ static void notify3(io_queue_t *qp)
  * @brief   Common UART configuration.
  *
  */
-static void configure_uart(UARTLP_TypeDef *uart, const SerialConfig *config)
+static void configure_uart(UART_TypeDef *uart, const SerialConfig *config)
 {
   uint32_t uart_clock;
 
   uart->C1 = 0;
   uart->C3 = UARTx_C3_ORIE | UARTx_C3_NEIE | UARTx_C3_FEIE | UARTx_C3_PEIE;
-  uart->S1 = UARTx_S1_IDLE | UARTx_S1_OR | UARTx_S1_NF | UARTx_S1_FE | UARTx_S1_PF;
+#if KINETIS_SERIAL_USE_UART0
+  if (uart == UART1)
+    uart->S1 = UARTx_S1_IDLE | UARTx_S1_OR | UARTx_S1_NF | UARTx_S1_FE | UARTx_S1_PF;
+  else
+#endif /* KINETIS_SERIAL_USE_UART0 */
+  {
+    (void)uart->S1;
+    (void)uart->D;
+  }
   while (uart->S1 & UARTx_S1_RDRF) {
     (void)uart->D;
   }
@@ -193,11 +219,12 @@ static void configure_uart(UARTLP_TypeDef *uart, const SerialConfig *config)
 
   /* FIXME: change fixed OSR = 16 to dynamic value based on baud */
   uint16_t divisor = (uart_clock / 16) / config->sc_speed;
-  uart->C4 = UARTx_C4_OSR & (16 - 1);
+  //uart->C4 = UARTx_C4_OSR & (16 - 1);
   uart->BDH = (divisor >> 8) & UARTx_BDH_SBR;
   uart->BDL = (divisor & UARTx_BDL_SBR);
 
   uart->C2 = UARTx_C2_RE | UARTx_C2_RIE | UARTx_C2_TE;
+  (void)uart->S1;
 }
 
 /*===========================================================================*/

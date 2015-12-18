@@ -103,7 +103,6 @@ static void print_mcu_info(void) {
                    pins[(sdid >> 0) & 15]);
 }
 
-
 /*
  * Application entry point.
  */
@@ -121,6 +120,7 @@ int main(void)
   halInit();
   chSysInit();
 
+  palawanEventsStart();
   palawanShellInit();
 
   chprintf(stream, "\r\n\r\nPalawan shell.  Based on build %s\r\n", gitversion);

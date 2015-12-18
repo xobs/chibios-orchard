@@ -97,7 +97,9 @@ LDSCRIPT= $(STARTUPLD)/KL16Z128.ld
 CSRC = main.c \
        gitversion.c \
        palawan-shell.c \
+       palawan-events.c \
        palawan-vectors.c \
+       usbphy.c \
        $(wildcard cmd-*.c) \
        $(STARTUPSRC) \
        $(PORTSRC) \
@@ -135,7 +137,7 @@ TCSRC =
 TCPPSRC =
 
 # List ASM source files here
-ASMSRC = $(STARTUPASM) $(PORTASM) $(OSALASM)
+ASMSRC = $(STARTUPASM) $(PORTASM) $(OSALASM) usbphy_ll.s
 
 INCDIR = $(STARTUPINC) $(KERNINC) $(PORTINC) $(OSALINC) \
          $(HALINC) $(PLATFORMINC) $(BOARDINC) \

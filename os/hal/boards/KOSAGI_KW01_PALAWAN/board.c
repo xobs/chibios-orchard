@@ -485,36 +485,6 @@ static void radio_configure_clko(uint8_t osc_div)
       (radio_read_register(RADIO_REG_DIOMAPPING2) & ~7) | osc_div);
 }
 
-#define SCL_PIN (1 << 1)
-#define SDA_PIN (1 << 2)
-
-static void set_scl(void) {
-  FGPIOC->PSOR = SCL_PIN;
-}
-
-static void clr_scl(void) {
-  FGPIOC->PCOR = SCL_PIN;
-}
-
-static void set_sda(void) {
-  FGPIOC->PSOR = SDA_PIN;
-}
-
-static void clr_sda(void) {
-  FGPIOC->PCOR = SDA_PIN;
-}
-
-/**
- * @brief   Get I2C into a known-good state
- * @details If the MCU is reset when I2C is in the middle of a transaction,
- *          the I2C slaves may hold the line low waiting for the clock line
- *          to transition.
- *          It is possible to "unblock" the bus by jamming at least 9 high
- *          pulses onto the line while toggling SCL.  This will cause the
- *          slave device to NAK when it's finished, thus freeing the bus.
- *
- * @notapi
- */
 /**
  * @brief   Early initialization code.
  * @details This initialization must be performed just after stack setup

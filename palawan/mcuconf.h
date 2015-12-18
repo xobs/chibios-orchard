@@ -60,7 +60,7 @@
  * EXTI driver system settings.
  */
 #define KINETIS_EXTI_NUM_CHANNELS               8
-#define KINETIS_EXT_PORTA_IRQ_PRIORITY          3
+#define KINETIS_EXT_PORTA_IRQ_PRIORITY          0
 #define KINETIS_EXT_PORTB_IRQ_PRIORITY          3
 #define KINETIS_EXT_PORTC_IRQ_PRIORITY          3
 #define KINETIS_EXT_PORTD_IRQ_PRIORITY          3

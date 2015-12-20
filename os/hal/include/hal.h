@@ -106,7 +106,7 @@
 /**
  * @brief   HAL version major number.
  */
-#define CH_HAL_MAJOR            3
+#define CH_HAL_MAJOR            4
 
 /**
  * @brief   HAL version minor number.

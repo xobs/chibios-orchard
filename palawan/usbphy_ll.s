@@ -1,110 +1,185 @@
 .text
 
-  /***
-    WS2812B Low-Level code
-      WS2812B timing requirements:
-      To transmit a "0": 400ns high, 850ns low  +/- 150ns  total = 1250ns
-	19 cycles H / 41 cycles L
-      To transmit a "1": 800ns high, 450ns low  +/- 150ns  total = 1250ns
-	38 cycles H / 22 cycles L
-      Clock balance to within +/-150ns = 7 cycles
+  /******************************************************
+   * USB PHY low-level code
+   * 
+   * Exports the following functions:
+   *
+   *    int usbPhyRead(USBPhy *phy, uint8_t *buffer)
+   *    void usbPhyWrite(USBPhy *phy, uint8_t buffer, uint32_t count)
+   *
+   * Interrupts are disabled during this code, since it is time-critical.
+   * Additionally, timing is maintained by examining the SysTick timer,
+   * so it is reconfigured during the course of running this code.
+   *
+   * A USB frame begins with the pattern KJKJKJKK.  Each bit takes about
+   * 666 nS, which at a 48 MHz clock rate gives us 32 cycles to read
+   * each bit.
+   *
+   * An interrupt takes 16 clock cycles, and it probably took at least 32
+   * clock cycles to get here, meaning we've already lost the first KJ.
+   * The first thing to do is measure how many ticks it takes for a
+   * transition.  To do that, perform the following:
+   *
+   *    0) Load a large value into SysTick Current
+   *    1) Wait for the line to transition
+   *    2) Compare the SysTick current
+   *    3) Divide by two, subtract residual cycles, and load that value
+   *       into SysTick current
+   *    4) Load the difference into SysTick reload
+   *    5) Wait for SysTick to loop
+   *
+   * At this point, we should be synchronized with the middle of the
+   * pulse.  SysTick will roll over once per clock cycle, in the middle,
+   * when it's good to sample.
+   *
+   * Now, wait for the end-of-sync pulse "KK" state.
+   *
+   * Continue reading bits in until we get a double-SE0.  Actually, any
+   * SE0 should be considered end-of-frame.
+   *
+   * Afterwards, restore the SysTick register.
+   */
 
-      Reset code is 50,000ns of low
+usbphy  .req r0
+samples .req r1
+count   .req r2
+systick .req r3
+gpio    .req r4   // Offset to the GPIO block
 
-      Each instruction takes 20.8ns, 1250/20.8 = 60 instructions per cycle total
-      
-      Data transmit to chain is {G[7:0],R[7:0],B[7:0]}
-
-      Data passed in shall be an array of bytes, GRB ordered, of length N specified as a parameter
-
-   ***/
-
-samples .req r0
-count   .req r1
-
-curval  .req r2  // Current GPIO value we're working on
-workval .req r3  // Current GPIO value we're working on
-
-dnmask  .req r4  // mask to examine D-
-dpmask  .req r5  // mask to examine D+
-
-gpio    .req r6
 delays  .req r7
 
-	// r2 is GPIO dest location
-	// r0 is "0" bit number code
-	// r1 is "1" bit number code
-	// r3 is loop counter for total number of pixels
-	// r4 is the current pixel value
-	// r5 is the test value for the top bit of current pixel
-	// r6 is the loop counter for bit number in a pixel
-	// r7 is current pointer to the pixel array
+
+  // r0 is the USBPHY struct (see below)
+  // r1 is the sample buffer
+  // r2 is the number of [remaining] max samples
+  // r3 is the SysTick offset
+  // r4 is the FGPIO offset
+
+/*
+static struct USBPHY {
+  uint32_t gpioBase;
+  uint32_t udbdpOffset;
+  uint32_t usbdpMask;
+  uint32_t usbdnOffset;
+  uint32_t usbdnMask;
+  uint32_t ticks;
+} __attribute__((__packed__));
+*/
 	
 .func usbPhyRead
 .global usbPhyRead
-usbPhyRead/*(uint8_t *samples, uint32_t count)*/:
-	// r0  uint8_t *samples
-	// r1  uint32_t	count
+/*int */usbPhyRead/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
 	push {r4,r5,r6,r7}
 
-	ldr gpio, FGPIOREG
-	ldr dnmask, DNMASK
-	ldr dpmask, DPMASK
+  ldr systick, SysTick_BASE
+  ldr r4, [systick, #0x10]       // Load SysTick_CTRL
+  ldr r5, [systick, #0x14]       // Load SysTick_RELOAD
+  ldr r6, [systick, #0x18]       // Load SysTick_CURRENT
+  push {r4,r5,r6}                // Save these values
 
-  mov delays, #0
-wait_for_zero:
-  ldr curval, [gpio, #0x50]           // 2
-  and curval, curval, dpmask    // 1
-  cmp curval, #0
-  bne wait_for_zero
+  /* Load a large value into SysTick */
+  mov r4, #0x5                  // Set CLKSOURCE and ENABLE for SysTick_CTRL
+	str r4, [systick, #0x10]      // Load the mask into SysTick_CTRL
+  mov r4, #1
+  lsl r4, r4, #14
+	str r4, [systick, #0x14]      // Load the large value into SysTick_RELOAD
+	str r4, [systick, #0x18]      // Load the large value into SysTick_CURRENT
+  ldr r4, [systick, #0x10]      // Load SysTick_CTRL, which clears COUNTFLAG
 
-wait_for_one:
-  ldr curval, [gpio, #0x50]           // 2
-  and curval, curval, dpmask    // 1
-  cmp curval, #0
-  add delays, #4
-  beq wait_for_zero
+  /*~~~~~~~~~~ Now SysTick is prepped for measurement ~~~~~~~~~~~*/
 
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
+  /* Wait for the line to change from a 1 to a 0 */
+  ldr gpio, [usbphy, #0]        // load the gpio register
+  ldr r6, [usbphy, #4]          // Load the USBDP offset into r6
+  ldr r7, [usbphy, #8]          // Load the USBDP mask into r7
 
+  /* Check to see if the pin is already 0, in which case wait for it to go 1 */
+  ldr r5, [gpio, r6]            // Sample the pin
+  tst r5, r7
+  beq line_has_1                // NE means Z flag was clear, meaning it's 1.
 
-	/////////////////////// /* 32 cycles (1.5 Mbit/s @ 48 MHz ) total */
+  /* The line is 0, so wait for it to go 1. */
+line_has_0:
+  ldr r5, [gpio, r6]            // Sample the pin
+  tst r5, r7
+  bne line_has_0                // EQ means Z flag was set, meaning it's 0.
+
+line_has_1:
+  /* The line is now at 1.  Wait for it to transition to 0, so we can time it */
+  ldr r5, [gpio, r6]            // Sample the pin
+  tst r5, r7
+  beq line_has_1                // NE means Z flag was clear, meaning it's 1.
+
+  /* The line has just transitioned to 0 (within the last four cycles). */
+  mov r5, #1
+  lsl r5, r4, #14
+  str r5, [systick, #0x18]      // Reset SysTick to our large value
+
+  /* Wait for the line to go to 1 */
+wait_for_1_transition:
+  ldr r5, [gpio, r6]            // Sample the pin
+  tst r5, r7
+  beq wait_for_1_transition     // NE means Z flag was clear, meaning it's 1.
+
+  /*~~~~~~~~~~ We now have the number of SysTick counts per pulse ~~~~~~~~~~~*/
+
+  ldr r5, [systick, #0x18]      // Load the SysTick value, to capture the number
+                                // of cycles to transition (it should be 32)
+  mov r4, #1
+  lsl r4, r4, #14
+
+  sub r4, r4, r5
+
+  add r4, r4, #0                // Add a constant number to r5, to account for
+                                // the number of cycles to do measurements.
+
+  /*
+  str r4, [systick, #0x14]      // Have the SysTick timer count that number
+
+  asr r4, r4, #2                // Divide by two, to wait for mid-pulse
+  sub r4, r4, #0                // Subtract the constant cycles to get mid-pulse
+
+  str r4, [systick, #0x18]      // Wait for mid-pulse
+  ldr r4, [systick, #0x10]      // Reset the COUNTFLAG
+  */
+
+  /* Wait until midway through the next pulse */
 get_usb_bit:
-  ldr workval, [gpio, #0x10]           // 2
-  ldr curval, [gpio, #0x50]            // 2
+  mov r5, #1
+  lsl r5, r5, #16
+  ldr systick, SysTick_BASE
+wait_for_sync_pulse:
+  str r3, [systick, #0x10]
+  tst r3, r5
+  bne wait_for_sync_pulse
 
-  and curval, curval, dpmask    // 1
+  /* Now we're lined up at the end of the pulse */
 
-  lsr workval, workval, #3      // 1
-  and workval, workval, dnmask  // 1
 
-  orr curval, curval, workval   // 1
+  ldr gpio, [usbphy, #0]        // load the gpio register into r5
+  ldr r6, [usbphy, #4]          // Load the USBDP offset into r6
+  ldr r7, [usbphy, #12]         // Load the USBDN offset into r7
 
-  strb curval, [samples]        // 2
+  ldr r3, [gpio, r6]            // Sample USBDP
+  ldr r5, [gpio, r7]            // Sample USBDN
 
-  /* 16 delays(?) */
+  ldr r6, [usbphy, #8]          // Load the USBDP mask into r6
+  ldr r7, [usbphy, #16]         // Load the USBDN mask into r7
 
-  mov workval, delays           // 1
-delay_loop:
-  sub workval, #1               // 1
-  cmp workval, #0               // 1
-  bne delay_loop                // 3
+  mov r5, #0
+  tst r3, r6
+  bne skip_bit2
+  mov r5, #1
 
+skip_bit1:
+  tst r5, r7
+  bne skip_bit2
+  mov r3, #2
+  orr r5, r5, r3
+skip_bit2:
+
+  strb r5, [samples]            // 2
   add samples, samples, #1      // 1
   sub count, count, #1          // 1
 
@@ -114,19 +189,21 @@ delay_loop:
 
 exit:	
 	
+	pop {r4,r5,r6}                // Restore SysTick values
+  ldr systick, SysTick_BASE
+  str r4, [systick, #0x10]      // Restore SysTick_CTRL
+  str r5, [systick, #0x14]      // Restore SysTick_RELOAD
+  str r6, [systick, #0x18]      // Restore SysTick_CURRENT
+
 	pop {r4,r5,r6,r7}
 	bx lr
 
 .type usbPhyRead, %function
 .size usbPhyRead, .-usbPhyRead
-	
+
 .balign 4
-DNMASK:
-.word 0x00002
-DPMASK: /* Read from FGPIOB_PDIR */
-.word 0x00001
-FGPIOREG:	 /* FGPIOB_PDIR */
-.word 0xF8000000
+SysTick_BASE:
+.word 0xE000E000
 
 .end
 	

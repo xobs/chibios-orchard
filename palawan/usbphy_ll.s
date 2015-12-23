@@ -44,8 +44,7 @@
 usbphy  .req r0
 samples .req r1
 count   .req r2
-systick .req r3
-gpio    .req r4   // Offset to the GPIO block
+gpio    .req r3   // Offset to the GPIO block
 
 delays  .req r7
 
@@ -70,8 +69,7 @@ delays  .req r7
   // r0 is the USBPHY struct (see below)
   // r1 is the sample buffer
   // r2 is the number of [remaining] max samples
-  // r3 is the SysTick offset
-  // r4 is the FGPIO offset
+  // r3 is the FGPIO offset
 
 /*
 static struct USBPHY {
@@ -91,129 +89,64 @@ static struct USBPHY {
 /*int */usbPhyRead/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
 	push {r4,r5,r6,r7}
 
-  ldr systick, SysTick_BASE
-  ldr r4, [systick, #0x10]       // Load SysTick_CTRL
-  ldr r5, [systick, #0x14]       // Load SysTick_RELOAD
-  ldr r6, [systick, #0x18]       // Load SysTick_CURRENT
-  push {r4,r5,r6}                // Save these values
+  ldr gpio, [usbphy, #0]        // load the gpio register into r3
 
-  /* Load a large value into SysTick */
-  mov r4, #0x5                  // Set CLKSOURCE and ENABLE for SysTick_CTRL
-	str r4, [systick, #0x10]      // Load the mask into SysTick_CTRL
-  ldr r4, [usbphy, #20]         // Load the number of ticks into SysTick_RELOAD
-	str r4, [systick, #0x14]      // Load the large value into SysTick_RELOAD
-	str r4, [systick, #0x18]      // Load the large value into SysTick_CURRENT
-  ldr r4, [systick, #0x10]      // Load SysTick_CTRL, which clears COUNTFLAG
+  mov r4, #1
 
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-#if 0
-  /*~~~~~~~~~~ Now SysTick is prepped for measurement ~~~~~~~~~~~*/
+  /* Wait for the line to shift */
+  ldr r5, [gpio, #0x50]            // Sample USBDP
+  and r5, r5, r4
 
-  /* Wait for the line to change from a 1 to a 0 */
-  ldr gpio, [usbphy, #0]        // load the gpio register
-  ldr r6, [usbphy, #4]          // Load the USBDP offset into r6
-  ldr r7, [usbphy, #8]          // Load the USBDP mask into r7
+wait_for_line_flip:
+  ldr r6, [gpio, #0x50]            // Sample USBDP
+  and r6, r6, r4
+  cmp r6, r4
+  beq wait_for_line_flip
 
-  /* Check to see if the pin is already 0, in which case wait for it to go 1 */
-  ldr r5, [gpio, r6]            // Sample the pin
-  tst r5, r7
-  beq line_has_1                // If the line mask is set, then we're at a 1
-
-  /* The line is 0, so wait for it to go 1. */
-line_has_0:
-  ldr r5, [gpio, r6]            // Sample the pin
-  tst r5, r7
-  bne line_has_0                // EQ means Z flag was set, meaning it's 0.
-
-line_has_1:
-  /* The line is now at 1.  Wait for it to transition to 0, so we can time it */
-  ldr r5, [gpio, r6]            // Sample the pin
-  tst r5, r7
-  beq line_has_1                // NE means Z flag was clear, meaning it's 1.
-
-  /* The line has just transitioned to 0 (within the last four cycles). */
-  ldr r5, [usbphy, #20]         // Wait for half of SysTick
-  asr r5, r5, #1
-  sub r5, r5, #6                // Skip several cycles to compensate for
-                                // the instructions required to load the
-                                // half-SysTick value.
-  str r5, [systick, #0x18]
-#endif
-
-  ldr r5, [systick, #0x10]
   /* Wait until midway through the next pulse */
 get_usb_bit:
-  mov r5, #1
-  lsl r5, r5, #16
-wait_for_sync_pulse:
-  ldr r6, [systick, #0x10]
-  tst r6, r5
-  bne wait_for_sync_pulse
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
+  nop
 
   /* Now we're lined up in the middle of the pulse */
 
+  ldr r5, [gpio, #0x10]            // Sample USBDN
+  ldr r4, [gpio, #0x50]            // Sample USBDP
 
-  ldr gpio, [usbphy, #0]        // load the gpio register into r5
+  mov r6, #1                    // 1
+  and r4, r4, r6                // 1
 
-  ldr r6, [gpio, #0x50]            // Sample USBDP
-  ldr r7, [gpio, #0x10]            // Sample USBDN
+  mov r6, #2                    // 1
+  asr r5, r5, #3                // 1
+  and r5, r5, r6                // 1
 
-  mov r5, #1
-  and r6, r6, r5
+  orr r4, r4, r5                // 1
 
-  mov r5, #2
-  asr r7, r7, #3
-  and r7, r7, r5
-  orr r6, r6, r7
-
-  /*
-  ldr r5, [usbphy, #8]          // Load the USBDP mask into r6
-
-  mov r3, #0
-  tst r6, r5
-  bne sample_dn
-  mov r3, #1
-
-sample_dn:
-  ldr r5, [usbphy, #16]         // Load the USBDN mask into r7
-  tst r5, r7
-  bne skip_bit2
-  mov r5, #2
-  orr r3, r5, r3
-skip_bit2:
-*/
-
-  strb r6, [samples]            // 2
+  strb r4, [samples]            // 1
   add samples, samples, #1      // 1
   sub count, count, #1          // 1
 
   cmp count, #0                 // 1
 
-  bne get_usb_bit               // 3
+  bne get_usb_bit               // 2
 
 exit:	
 	
-	pop {r4,r5,r6}                // Restore SysTick values
-  ldr systick, SysTick_BASE
-  str r4, [systick, #0x10]      // Restore SysTick_CTRL
-  str r5, [systick, #0x14]      // Restore SysTick_RELOAD
-  str r6, [systick, #0x18]      // Restore SysTick_CURRENT
-
 	pop {r4,r5,r6,r7}
 	bx lr
 

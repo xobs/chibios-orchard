@@ -67,6 +67,7 @@ void cmd_usbla(BaseSequentialStream *chp, int argc, char *argv[])
     usb_phy_decode(chp, samples, count);
     chprintf(chp, "\r\n");
   }
+  void usbResetRun(void);
 }
 
 palawan_command("usbla", cmd_usbla);

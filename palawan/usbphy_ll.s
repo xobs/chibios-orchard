@@ -44,9 +44,11 @@
 usbphy  .req r0
 samples .req r1
 count   .req r2
-gpio    .req r3   // Offset to the GPIO block
-
-delays  .req r7
+reg     .req r3   // Offset to the GPIO block
+mask    .req r4   // Mask within the GPIO block
+shift   .req r4   // Shift within the GPIO block (shared with mask)
+val1    .req r5
+val2    .req r6
 
 /* Variables in use:
   usbphy   -- Pointer to a USBPHY struct
@@ -73,14 +75,15 @@ delays  .req r7
 
 /*
 static struct USBPHY {
-  uint32_t gpioBase;
-  uint32_t udbdpOffset;
+  uint32_t usbdpAddr;
   uint32_t usbdpMask;
-  uint32_t usbdnOffset;
-  uint32_t usbdnMask;
-  uint32_t ticks;
   uint32_t usbdpShift;
+
+  uint32_t usbdnAddr;
+  uint32_t usbdnMask;
   uint32_t usbdnShift;
+
+  uint32_t ticks;
 } __attribute__((__packed__));
 */
 	
@@ -89,19 +92,27 @@ static struct USBPHY {
 /*int */usbPhyRead/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
 	push {r4,r5,r6,r7}
 
-  ldr gpio, [usbphy, #0]        // load the gpio register into r3
-
-  mov r4, #1
+  ldr reg, [usbphy, #12]         // load the gpio register into r3
+  ldr mask, [usbphy, #16]        // Mask to get USB line bit from register
 
   /* Wait for the line to shift */
-  ldr r5, [gpio, #0x50]            // Sample USBDP
-  and r5, r5, r4
+  ldr val1, [reg]               // Sample USBDP
+  and val1, val1, mask          // Mask off the interesting bit
+
+  mov r7, #32                   // Set a timeout of 32 loops
 
 wait_for_line_flip:
-  ldr r6, [gpio, #0x50]            // Sample USBDP
-  and r6, r6, r4
-  cmp r6, r4
+  ldr val2, [reg]               // Sample USBDP
+  and val2, val2, mask          // Mask off the interesting bit
+
+  sub r7, r7, #1
+  cmp r7, #0
+  beq timeout
+
+  cmp val1, val2                // Wait for it to change
   beq wait_for_line_flip
+
+  mov r7, #0
 
   /* Wait until midway through the next pulse */
 get_usb_bit:
@@ -115,43 +126,82 @@ get_usb_bit:
   nop
   nop
   nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
 
   /* Now we're lined up in the middle of the pulse */
+  ldr val1, [usbphy, #0]        // load USBDP register into temp reg
+  ldr val2, [usbphy, #12]       // load USBDN register into temp reg
+  ldr val1, [val1]              // Sample USBDP
+  ldr val2, [val2]              // Sample USBDN
 
-  ldr r5, [gpio, #0x10]            // Sample USBDN
-  ldr r4, [gpio, #0x50]            // Sample USBDP
+  ldr shift, [usbphy, #8]       // Load the USBDP shift value
+  asr val1, val1, shift         // Shift the USBDP value down to bit 1
+  mov mask, #1                  // Since it's bit 1, we'll mask by 1
+  and val1, val1, mask          // Perform the mask by 0x1
 
-  mov r6, #1                    // 1
-  and r4, r4, r6                // 1
+  ldr shift, [usbphy, #20]      // Load the USBDN shift value
+                                // We want to shift by one less, to move to
+  sub shift, shift, #1          // bit 2, so subtract 1 from the shift.
+  asr val2, val2, shift         // Perform the shift
+  mov mask, #2                  // Now, mask the value by 2.
+  and val2, val2, mask          // Perform the mask by 0x2.
 
-  mov r6, #2                    // 1
-  asr r5, r5, #3                // 1
-  and r5, r5, r6                // 1
+  orr val1, val1, val2          // OR the two bits together.
 
-  orr r4, r4, r5                // 1
+  strb val1, [samples, r7]          // Store the value in our sample buffer.
+  add r7, r7, #1                // Move the sample buffer up by 1.
+  sub count, count, #1          // Subtract 1 from the max sample number.
 
-  strb r4, [samples]            // 1
-  add samples, samples, #1      // 1
-  sub count, count, #1          // 1
+  cmp count, #0                 // See if there are any samples left.
 
-  cmp count, #0                 // 1
-
-  bne get_usb_bit               // 2
+  bne get_usb_bit               // If so, obtain another bit.
 
 exit:	
-	
 	pop {r4,r5,r6,r7}
+  mov r0, #0
 	bx lr
 
+timeout:
+	pop {r4,r5,r6,r7}
+  mov r0, #0
+  sub r0, r0, #1
+	bx lr
 .type usbPhyRead, %function
 .size usbPhyRead, .-usbPhyRead
+
+
+/*
+.align  2
+.thumb_func
+.global NMI_Handler
+NMI_Handler:
+  ldr r0, SIM_SCGC5
+  ldr r0, [r0]
+  ldr r1, SIM_SCGC5_default
+  cmp r0, r1
+
+  beq do_reset
+
+  ldr r2, NMI_Func
+  mov pc, r2
+
+do_reset:
+  ldr r2, Reset_Func
+  mov pc, r2
+.type NMI_Handler, %function
+.size NMI_Handler, .-NMI_Handler
+
+.balign 4
+Reset_Func:
+.word Reset_Handler
+NMI_Func:
+.word usbPhyISR
+
+.balign 4
+SIM_SCGC5:
+.word 0x40048038
+SIM_SCGC5_default:
+.word 0x00000182
+*/
 
 .balign 4
 SysTick_BASE:

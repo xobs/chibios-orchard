@@ -11,14 +11,15 @@
 static uint8_t samples[TOTAL_RUNS][TOTAL_SAMPLES];
 
 struct USBPHY {
-  uint32_t gpioBase;
-  uint32_t usbdpOffset;
+  volatile void *usbdpAddr;
   uint32_t usbdpMask;
-  uint32_t usbdnOffset;
-  uint32_t usbdnMask;
-  uint32_t ticks;
   uint32_t usbdpShift;
+
+  volatile void *usbdnAddr;
+  uint32_t usbdnMask;
   uint32_t usbdnShift;
+
+  uint32_t ticks;
 } __attribute__((packed));
 
 enum state {
@@ -34,29 +35,30 @@ static int run = 0;
 /* GPIOB (PTB0) is wiggling a lot */
 
 static struct USBPHY usbPhy = {
-  .gpioBase = 0xF8000000,
-  .usbdpOffset = 0x50,
+  /* PTB0 */
+  .usbdpAddr = &FGPIOB->PDIR,
   .usbdpMask = 0x01,
-  .usbdnOffset = 0x10,
+  .usbdpShift = 0,
+
+  /* PTA4 */
+  .usbdnAddr = &FGPIOA->PDIR,
   .usbdnMask = 0x10,
+  .usbdnShift = 4,
+
   .ticks = 48000000 / USB_LS_RATE,
-  .usbdpShift = 0x0,
-  .usbdnShift = 0x3,
 };
 
+//void usbPhyISR(void) {
+//  port_lock_from_isr();
 void usbStateTransitionI(void) {
+
   int i;
 
-  *((uint32_t *)0xf80000cc) = 0x80;
-  usbPhyRead(&usbPhy, samples[run], TOTAL_SAMPLES);
+  *((volatile uint32_t *)0xf80000cc) = 0x80;
+//  PORTA->PCR[3] = PORTx_PCRn_MUX(1);
 
-  /*
-  if (led_on)
-    palSetPad(GPIOD, 7);
-  else
-    palClearPad(GPIOD, 7);
-  led_on = !led_on;
-  */
+  if (usbPhyRead(&usbPhy, samples[run], TOTAL_SAMPLES) < 0)
+    goto err;
 
   for (i = 0; i < TOTAL_SAMPLES; i++) {
     if (samples[run][i] != state_j) {
@@ -66,6 +68,11 @@ void usbStateTransitionI(void) {
       break;
     }
   }
+
+err:
+//  PORTA->PCR[3] = PORTx_PCRn_MUX(7);
+//  port_unlock_from_isr();
+  return;
 }
 
 void usbResetRun(void) {

@@ -103,7 +103,7 @@ static struct USBPHY {
   ldr val1, [reg]               // Sample USBDP
   and val1, val1, mask          // Mask off the interesting bit
 
-  mov r7, #5                    // The loop is 9 cycles on a failure.  One
+  mov r7, #6                    // The loop is 9 cycles on a failure.  One
                                 // pulse is 32 cycles.  Therefore, loop up
                                 // to 5 times before giving up.
 
@@ -168,6 +168,12 @@ get_usb_bit:
   cmp count, #0                 // See if there are any samples left.
 
   bne get_usb_bit               // If so, obtain another bit.
+
+phy_overflow:                   // If not, we've overflowed the buffer
+  pop {samples,r4,r5,r6,r7}
+  mov r0, #0
+  sub r0, r0, #2                // Return -2
+  bx lr
 
 exit:
   mov count, samples

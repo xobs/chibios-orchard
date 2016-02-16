@@ -12,8 +12,8 @@
     + 16            /* CRC16 */                         \
     + 2             /* SE0 End-of-packet */             \
     + 8             /* Extra padding (unnecessary?) */
-#define MAX_BIT_BUFFERS 32
-#define MAX_BIT_BUFFERS_MASK 0x1f
+#define MAX_BIT_BUFFERS 16
+#define MAX_BIT_BUFFERS_MASK 0xf
 
 static uint8_t bit_buffers[MAX_BIT_BUFFERS][BIT_BUFFER_SIZE];
 static uint8_t bit_buffer_sizes[MAX_BIT_BUFFERS];
@@ -25,6 +25,8 @@ event_source_t usb_phy_data_available;
 
 static int stats_errors;
 static int stats_underflow;
+static int stats_overflow;
+static int stats_timeout;
 static int stats_num_packets;
 
 #define USB_FS_RATE 12000000 /* 12 MHz */
@@ -139,6 +141,8 @@ int usbPhyResetStatistics(void) {
   stats_errors = 0;
   stats_underflow = 0;
   stats_num_packets = 0;
+  stats_overflow = 0;
+  stats_timeout = 0;
   return 0;
 }
 
@@ -146,6 +150,8 @@ void usbPhyGetStatistics(struct usb_phy_statistics *stats) {
   stats->num_packets = stats_num_packets;
   stats->errors = stats_errors;
   stats->underflow = stats_underflow;
+  stats->overflow = stats_overflow;
+  stats->timeout = stats_timeout;
   stats->read_head = bit_buffer_read_head;
   stats->write_head = bit_buffer_write_head;
   stats->buffer_size = MAX_BIT_BUFFERS;
@@ -199,7 +205,15 @@ int usbProcessIncoming(void) {
   return count;
 }
 
-//  port_lock_from_isr();
+/*
+ * Note that this interrupt plays fast-and-loose with ChibiOS conventions.
+ * It does not call port_lock_from_isr() on entry, nor does it call
+ * port_unlock_from_isr() on exit.  As far as ChibiOS is concerned, this
+ * function does not exist.
+ *
+ * This is because standard ChibiOS IRQ housekeeping adds too much overhead
+ * to this process, and we need to respond as quickly as possible.
+ */
 void usbStateTransitionI(void) {
 
   int bits_read;
@@ -222,7 +236,12 @@ void usbStateTransitionI(void) {
                          bit_buffers[bit_buffer_write_head],
                          BIT_BUFFER_SIZE);
   if (bits_read < 0) {
-    stats_errors++;
+    if (bits_read == -1)
+      stats_timeout++;
+    else if (bits_read == -2)
+      stats_overflow++;
+    else
+      stats_errors++;
     goto err;
   }
 
@@ -232,29 +251,36 @@ void usbStateTransitionI(void) {
   /* Increment the write head */
   bit_buffer_write_head = next_write_pos;
 
-  OSAL_IRQ_PROLOGUE();
-  chSysLockFromISR();
-  chEvtBroadcastI(&usb_phy_data_available);
-  chSysUnlockFromISR();
-  OSAL_IRQ_EPILOGUE();
-
 err:
 //  PORTA->PCR[3] = PORTx_PCRn_MUX(7);
 //  port_unlock_from_isr();
   return;
 }
 
+static THD_WORKING_AREA(waUsbBusyPollThread, 64);
+static THD_FUNCTION(usb_busy_poll_thread, arg) {
+
+  (void)arg;
+
+  chRegSetThreadName("USB poll thread");
+  while (1) {
+    chThdSleepMilliseconds(1);
+    if (bit_buffer_write_head != bit_buffer_read_head)
+      chEvtBroadcast(&usb_phy_data_available);
+  }
+
+  return;
+}
+
 void usbInit(void) {
   chEvtObjectInit(&usb_phy_data_available);
   usb_initialized = 1;
+  chThdCreateStatic(waUsbBusyPollThread, sizeof(waUsbBusyPollThread),
+                    LOWPRIO, usb_busy_poll_thread, NULL);
 }
 
 OSAL_IRQ_HANDLER(KINETIS_PORTA_IRQ_VECTOR) {
-//  PORT_IRQ_PROLOGUE();
-
   /* Clear all pending interrupts on this port. */
   PORTA->ISFR = 0xFFFFFFFF;
   usbStateTransitionI();
-
-//  PORT_IRQ_EPILOGUE();
 }

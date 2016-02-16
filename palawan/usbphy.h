@@ -9,6 +9,8 @@ struct usb_phy_statistics {
   int num_packets;
   int errors;
   int underflow;
+  int overflow;
+  int timeout;
   int read_head;
   int write_head;
   int buffer_size;

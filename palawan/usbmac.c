@@ -197,3 +197,61 @@ const struct usb_packet *usbMacGetPacket(void) {
 #warning Unlock here
   return packet;
 }
+
+int usbMacSendPacket(const struct usb_packet *packet) {
+  uint8_t buffer[1 + 8 + 2]; /* PID + data + CRC-16 (worst-case) */
+  int buffer_size;
+  uint16_t crc16_calc;
+
+  memset(buffer, 0, sizeof(buffer));
+  buffer_size = -1;
+
+  switch (packet->pid) {
+  case 0xf0: /* MDATA */
+  case 0xe1: /* DATA2 */
+  case 0xd2: /* DATA1 */
+  case 0xc3: /* DATA0 */
+    buffer[0] = packet->pid;
+    memcpy(buffer + 1, packet->data, packet->size);
+    crc16_calc = crc16(buffer + 1, packet->size, 0xffff, 0x8005);
+    buffer[9] = crc16_calc >> 8;
+    buffer[10] = crc16_calc;
+    buffer_size = 11;
+    break;
+
+  /* Token packets, with CRC-5 */
+  case 0xb4: /* SETUP */
+  case 0xa5: /* SOF */
+  case 0x96: /* IN */
+  case 0x87: /* OUT */
+#warning "Implement CRC-5"
+    return -3;
+    break;
+
+  /* One-byte packets, no CRC required */
+  case 0x78: /* STALL */
+  case 0x69: /* NYET */
+  case 0x5a: /* NAK */
+  case 0x4b: /* ACK */
+    buffer[0] = packet->pid;
+    buffer_size = 1;
+    break;
+
+  /* Special cases (also no CRC?) */
+  case 0x3c: /* PRE */
+  case 0x2d: /* PING */
+  case 0x1e: /* SPLIT */
+  case 0x0f: /* RESERVED */
+    buffer[0] = packet->pid;
+    buffer_size = 1;
+    break;
+
+  default:
+    return -1;
+  }
+
+  if (buffer_size < 0)
+    return -2;
+
+  return usbPhyQueue(buffer, buffer_size);
+}

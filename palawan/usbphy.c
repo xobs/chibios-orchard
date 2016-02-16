@@ -15,6 +15,13 @@
 #define MAX_BIT_BUFFERS 16
 #define MAX_BIT_BUFFERS_MASK 0xf
 
+/* Outgoing queues */
+static uint8_t bit_queues[MAX_BIT_BUFFERS][BIT_BUFFER_SIZE];
+static uint8_t bit_queue_sizes[MAX_BIT_BUFFERS];
+static uint8_t bit_queue_write_head;
+static uint8_t bit_queue_read_head;
+
+/* Incoming buffers */
 static uint8_t bit_buffers[MAX_BIT_BUFFERS][BIT_BUFFER_SIZE];
 static uint8_t bit_buffer_sizes[MAX_BIT_BUFFERS];
 static uint8_t bit_buffer_write_head;
@@ -137,6 +144,68 @@ static int usb_convert_phy_to_mac(uint8_t *input, uint8_t *output, int bits) {
   return bytes;
 }
 
+static int usb_convert_mac_to_phy(uint8_t *input, uint8_t *output, int bytes) {
+
+  int out_bits;
+  int input_byte;
+  int input_bit;
+  int run_length;
+  enum state last_state;
+  enum state cur_state;
+  
+  out_bits = 0;
+  input_bit = 0;
+  input_byte = 0;
+  run_length = 0;
+
+  /* Generate the start-of-frame pattern */
+  output[out_bits++] = state_k;
+  output[out_bits++] = state_j;
+  output[out_bits++] = state_k;
+  output[out_bits++] = state_j;
+  output[out_bits++] = state_k;
+  output[out_bits++] = state_j;
+  output[out_bits++] = state_k;
+  output[out_bits++] = state_k;
+
+  last_state = cur_state = state_k;
+  run_length = 2;
+
+  for (input_byte = 0; input_byte < bytes; input_byte++) {
+    for (input_bit = 7; input_bit >= 0; input_bit--) {
+      if (input[input_byte] & (1 << input_bit)) {
+        cur_state = last_state;
+        run_length++;
+
+        /* Bit-stuff.  More than 6 1s in a row get turned into a 0 */
+        if (run_length > 6) {
+          if (cur_state == state_j)
+            cur_state = state_k;
+          else
+            cur_state = state_j;
+          run_length = 0;
+        }
+      }
+      else {
+        run_length = 0;
+        if (cur_state == state_j)
+          cur_state = state_k;
+        else
+          cur_state = state_j;
+      }
+      output[out_bits++] = cur_state;
+      last_state = cur_state;
+    }
+  }
+
+  /* Generate the end-of-frame pattern */
+  output[out_bits++] = state_se0;
+  output[out_bits++] = state_se0;
+  return out_bits;
+
+  return bytes;
+}
+
 int usbPhyResetStatistics(void) {
   stats_errors = 0;
   stats_underflow = 0;
@@ -205,6 +274,19 @@ int usbProcessIncoming(void) {
   return count;
 }
 
+int usbPhyQueue(const uint8_t *buffer, int buffer_size) {
+
+  int bit_length = usb_convert_mac_to_phy(buffer,
+                                          bit_queues[bit_queue_write_head],
+                                          buffer_size);
+  if (bit_length <= 0)
+    return bit_length;
+
+  bit_queue_sizes[bit_queue_write_head] = bit_length;
+  bit_queue_write_head = (bit_queue_write_head + 1) & MAX_BIT_BUFFERS_MASK;
+  return 0;
+}
+
 /*
  * Note that this interrupt plays fast-and-loose with ChibiOS conventions.
  * It does not call port_lock_from_isr() on entry, nor does it call
@@ -251,9 +333,15 @@ void usbStateTransitionI(void) {
   /* Increment the write head */
   bit_buffer_write_head = next_write_pos;
 
+  /* If a packet is queued, write it out */
+  if (bit_queue_read_head != bit_queue_write_head) {
+    usbPhyWrite(&usbPhy,
+                bit_queues[bit_queue_read_head],
+                bit_queue_sizes[bit_queue_read_head]);
+    bit_queue_read_head = (bit_queue_read_head + 1) & MAX_BIT_BUFFERS_MASK;
+  }
+
 err:
-//  PORTA->PCR[3] = PORTx_PCRn_MUX(7);
-//  port_unlock_from_isr();
   return;
 }
 

@@ -24,5 +24,6 @@ void usbMacGetStatistics(struct usb_mac_statistics *stats);
 int usbMacResetStatistics(void);
 int usbMacInsert(uint8_t *temp_packet, int packet_size);
 const struct usb_packet *usbMacGetPacket(void);
+int usbMacSendPacket(const struct usb_packet *packet);
 
 #endif /* __USB_MAC_H__ */

@@ -21,6 +21,7 @@
 
 #include "shell.h"
 #include "chprintf.h"
+#include "usbphy.h"
 
 #include "palawan.h"
 #include "palawan-events.h"
@@ -48,6 +49,12 @@ static void shell_termination_handler(eventid_t id) {
 
   chprintf(stream, "\r\nRespawning shell (shell #%d, event %d)\r\n", ++i, id);
   palawanShellRestart();
+}
+
+static void usb_process_incoming(eventid_t id) {
+
+  (void)id;
+  usbProcessIncoming();
 }
 /*
 static void default_radio_handler(uint8_t type, uint8_t src, uint8_t dst,
@@ -162,6 +169,8 @@ int main(void)
 #endif
 
   /* PTD6 and PTD5 */
+  usbInit();
+
   palawanEventsStart();
   palawanShellInit();
 
@@ -172,8 +181,7 @@ int main(void)
   spiStart(&SPID2, &spi_config);
 
   evtTableHook(palawan_events, shell_terminated, shell_termination_handler);
-
-  //radioSetDefaultHandler(radioDriver, default_radio_handler);
+  evtTableHook(palawan_events, usb_phy_data_available, usb_process_incoming);
 
   palawanShellRestart();
 

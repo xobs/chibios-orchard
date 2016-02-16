@@ -20,6 +20,7 @@
 
 #include "palawan-shell.h"
 
+#if 0
 extern uint8_t *usbGetSamples(int *count);
 extern uint8_t *usbGetSampleRun(int *count, int thisrun);
 extern int usbGetRun(void);
@@ -49,8 +50,11 @@ static void usb_phy_decode(BaseSequentialStream *chp, uint8_t *samples, int coun
 }
 
 void usbResetRun(void);
+#endif
+
 void cmd_usbla(BaseSequentialStream *chp, int argc, char *argv[])
 {
+#if 0
   int count;
   int i;
   int run;
@@ -73,6 +77,11 @@ void cmd_usbla(BaseSequentialStream *chp, int argc, char *argv[])
 //    chprintf(chp, "\r\n");
   }
   usbResetRun();
+#endif
+
+  (void)argc;
+  (void)argv;
+  chprintf(chp, "Unimplemented.\r\n");
 }
 
 palawan_command("usbla", cmd_usbla);

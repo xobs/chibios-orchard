@@ -100,6 +100,7 @@ CSRC = main.c \
        palawan-events.c \
        palawan-vectors.c \
        usbphy.c \
+       usbmac.c \
        $(wildcard cmd-*.c) \
        $(STARTUPSRC) \
        $(PORTSRC) \

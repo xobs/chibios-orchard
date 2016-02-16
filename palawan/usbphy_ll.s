@@ -49,6 +49,8 @@ mask    .req r4   // Mask within the GPIO block
 shift   .req r4   // Shift within the GPIO block (shared with mask)
 val1    .req r5
 val2    .req r6
+tmp     .req r7
+lastbit .req r12
 
 /* Variables in use:
   usbphy   -- Pointer to a USBPHY struct
@@ -86,21 +88,26 @@ static struct USBPHY {
   uint32_t ticks;
 } __attribute__((__packed__));
 */
-	
+
 .func usbPhyRead
 .global usbPhyRead
 /*int */usbPhyRead/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
-	push {r4,r5,r6,r7}
+  push {samples,r4,r5,r6,r7}
 
-  ldr reg, [usbphy, #12]         // load the gpio register into r3
-  ldr mask, [usbphy, #16]        // Mask to get USB line bit from register
+//  ldr reg, [usbphy, #12]         // load the gpio register into r3
+//  ldr mask, [usbphy, #16]        // Mask to get USB line bit from register
+  ldr reg, [usbphy, #0]         // load the gpio register into r3
+  ldr mask, [usbphy, #4]        // Mask to get USB line bit from register
 
   /* Wait for the line to shift */
   ldr val1, [reg]               // Sample USBDP
   and val1, val1, mask          // Mask off the interesting bit
 
-  mov r7, #32                   // Set a timeout of 32 loops
+  mov r7, #5                    // The loop is 9 cycles on a failure.  One
+                                // pulse is 32 cycles.  Therefore, loop up
+                                // to 5 times before giving up.
 
+  /* Wait until midway through the next pulse */
 wait_for_line_flip:
   ldr val2, [reg]               // Sample USBDP
   and val2, val2, mask          // Mask off the interesting bit
@@ -112,20 +119,19 @@ wait_for_line_flip:
   cmp val1, val2                // Wait for it to change
   beq wait_for_line_flip
 
-  mov r7, #0
+  // There should be about 16 instructions between "ldr" above and "ldr" below.
+  // Minus up to 8 instructions for the "beq" path
+.rept 2
+  nop
+.endr
 
-  /* Wait until midway through the next pulse */
+  /* Grab the next bit off the USB signals */
+  mov tmp, #0
+  mov lastbit, tmp              // Reset our last bit, to look for SE0
 get_usb_bit:
+.rept 4
   nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
+.endr
 
   /* Now we're lined up in the middle of the pulse */
   ldr val1, [usbphy, #0]        // load USBDP register into temp reg
@@ -147,24 +153,34 @@ get_usb_bit:
 
   orr val1, val1, val2          // OR the two bits together.
 
-  strb val1, [samples, r7]          // Store the value in our sample buffer.
-  add r7, r7, #1                // Move the sample buffer up by 1.
+  strb val1, [samples]          // Store the value in our sample buffer.
+
+  add lastbit, lastbit, val1    // An end-of-frame is indicated by two
+                                // frames of SE0.  If this is the case,
+                                // then the result of adding these together
+                                // will result in 0.
+  beq exit                      // Exit if so.
+  mov lastbit, val1
+
+  add samples, samples, #1      // Move the sample buffer up by 1.
   sub count, count, #1          // Subtract 1 from the max sample number.
 
   cmp count, #0                 // See if there are any samples left.
 
   bne get_usb_bit               // If so, obtain another bit.
 
-exit:	
-	pop {r4,r5,r6,r7}
-  mov r0, #0
-	bx lr
+exit:
+  mov count, samples
+  pop {samples,r4,r5,r6,r7}
+  sub r0, count, samples        // Report how many bits we received
+  bx lr
 
 timeout:
-	pop {r4,r5,r6,r7}
+  pop {samples,r4,r5,r6,r7}
   mov r0, #0
   sub r0, r0, #1
-	bx lr
+  bx lr
+.endfunc
 .type usbPhyRead, %function
 .size usbPhyRead, .-usbPhyRead
 
@@ -208,4 +224,3 @@ SysTick_BASE:
 .word 0xE000E000
 
 .end
-	

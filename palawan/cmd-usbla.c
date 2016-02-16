@@ -29,21 +29,26 @@ static void usb_phy_decode(BaseSequentialStream *chp, uint8_t *samples, int coun
   int i;
 
   for (i = 1; i < count; i++) {
-    if ((samples[i - 1] == 0) && samples[i] == 0) {
-      chprintf(chp, "[");
-      break;
-    }
+    if ((samples[i - 1] == 0) && samples[i] == 0)
+      chprintf(chp, " 8<");
     else if (samples[i] == 0)
       chprintf(chp, "-");
     else if (samples[i] == 3)
       chprintf(chp, "+");
-    else if (samples[i - 1] == samples[i])
+    else if ((samples[i - 1] == 1) && (samples[i] == 2))
+      chprintf(chp, "0");
+    else if ((samples[i - 1] == 2) && (samples[i] == 1))
+      chprintf(chp, "0");
+    else if ((samples[i - 1] == 2) && (samples[i] == 2))
+      chprintf(chp, "1");
+    else if ((samples[i - 1] == 1) && (samples[i] == 1))
       chprintf(chp, "1");
     else
-      chprintf(chp, "0");
+      chprintf(chp, "?(%x)", samples[i]);
   }
 }
 
+void usbResetRun(void);
 void cmd_usbla(BaseSequentialStream *chp, int argc, char *argv[])
 {
   int count;
@@ -55,19 +60,19 @@ void cmd_usbla(BaseSequentialStream *chp, int argc, char *argv[])
   (void)argc;
   (void)argv;
   
-//  run = 0; {
-  for (run = 0; run < usbMaxRuns(); run++) {
-    chprintf(chp, " %c run %02d: ", run == usbGetRun()?'*':' ', run);
+  for (run = 0; run < usbGetRun(); run++) {
+    chprintf(chp, " %c run %02d:", run == usbGetRun()?'*':' ', run);
     samples = usbGetSampleRun(&count, run);
 
     for (i = 0; i < count; i++)
-      chprintf(chp, "%c", states[samples[i]]);
+      chprintf(chp, " %02x", samples[i]);
+//      chprintf(chp, "%c", states[samples[i]]);
     chprintf(chp, "\r\n");
-    chprintf(chp, "           ");
-    usb_phy_decode(chp, samples, count);
-    chprintf(chp, "\r\n");
+//    chprintf(chp, "           ");
+//    usb_phy_decode(chp, samples, count);
+//    chprintf(chp, "\r\n");
   }
-  void usbResetRun(void);
+  usbResetRun();
 }
 
 palawan_command("usbla", cmd_usbla);

@@ -157,6 +157,7 @@ static inline void irq_handler(PORT_TypeDef * const port, const unsigned port_wi
  * @isr
  */
 #if defined(KINETIS_PORTA_IRQ_VECTOR) && KINETIS_EXT_PORTA_WIDTH > 0
+/*
 OSAL_IRQ_HANDLER(KINETIS_PORTA_IRQ_VECTOR) {
   OSAL_IRQ_PROLOGUE();
 
@@ -164,6 +165,7 @@ OSAL_IRQ_HANDLER(KINETIS_PORTA_IRQ_VECTOR) {
 
   OSAL_IRQ_EPILOGUE();
 }
+*/
 #endif /* KINETIS_EXT_PORTA_WIDTH > 0 */
 
 /**

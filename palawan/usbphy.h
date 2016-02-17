@@ -11,17 +11,20 @@ struct usb_phy_statistics {
   int underflow;
   int overflow;
   int timeout;
-  int read_head;
-  int write_head;
-  int buffer_size;
+  int in_read_head;
+  int in_write_head;
+  int in_buffer_size;
+  int out_read_head;
+  int out_write_head;
+  int out_buffer_size;
 };
 
 void usbPhyGetStatistics(struct usb_phy_statistics *stats);
 int usbPhyResetStatistics(void);
 
 void usbInit(void);
-int usbPhyRead(struct USBPHY *phy, uint8_t *samples, uint32_t count);
-int usbPhyWrite(struct USBPHY *phy, uint8_t *samples, uint32_t count);
+int usbPhyRead(const struct USBPHY *phy, uint8_t *samples, uint32_t count);
+int usbPhyWrite(const struct USBPHY *phy, const uint8_t *samples, uint32_t count);
 int usbProcessIncoming(void);
 int usbPhyQueue(const uint8_t *buffer, int buffer_size);
 

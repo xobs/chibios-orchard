@@ -40,11 +40,17 @@ static int stats_num_packets;
 #define USB_LS_RATE (USB_FS_RATE / 8) /* 1.5 MHz */
 
 struct USBPHY {
-  volatile void *usbdpAddr;
+  volatile void *usbdpIAddr;
+  volatile void *usbdpSAddr;
+  volatile void *usbdpCAddr;
+  volatile void *usbdpDAddr;
   uint32_t usbdpMask;
   uint32_t usbdpShift;
 
-  volatile void *usbdnAddr;
+  volatile void *usbdnIAddr;
+  volatile void *usbdnSAddr;
+  volatile void *usbdnCAddr;
+  volatile void *usbdnDAddr;
   uint32_t usbdnMask;
   uint32_t usbdnShift;
 
@@ -58,16 +64,41 @@ enum state {
   state_se1,
 };
 
-static struct USBPHY usbPhy = {
+static const struct USBPHY usbPhy = {
+#if !defined(USB_PHY_LL_DEBUG)
   /* PTB0 */
-  .usbdpAddr = &FGPIOB->PDIR,
+  .usbdpIAddr = &FGPIOB->PDIR,
+  .usbdpSAddr = &FGPIOB->PSOR,
+  .usbdpCAddr = &FGPIOB->PCOR,
+  .usbdpDAddr = &FGPIOB->PDDR,
   .usbdpMask = (1 << 0),
   .usbdpShift = 0,
 
   /* PTA4 */
-  .usbdnAddr = &FGPIOA->PDIR,
+  .usbdnIAddr = &FGPIOA->PDIR,
+  .usbdnSAddr = &FGPIOA->PSOR,
+  .usbdnCAddr = &FGPIOA->PCOR,
+  .usbdnDAddr = &FGPIOA->PDDR,
   .usbdnMask = (1 << 4),
   .usbdnShift = 4,
+#else
+  /* Pins J21 and J19 */
+  /* PTD5 */
+  .usbdpIAddr = &FGPIOD->PDIR,
+  .usbdpSAddr = &FGPIOD->PSOR,
+  .usbdpCAddr = &FGPIOD->PCOR,
+  .usbdpDAddr = &FGPIOD->PDDR,
+  .usbdpMask = (1 << 5),
+  .usbdpShift = 5,
+
+  /* PTD6 */
+  .usbdnIAddr = &FGPIOD->PDIR,
+  .usbdnSAddr = &FGPIOD->PSOR,
+  .usbdnCAddr = &FGPIOD->PCOR,
+  .usbdnDAddr = &FGPIOD->PDDR,
+  .usbdnMask = (1 << 6),
+  .usbdnShift = 6,
+#endif
 
   .ticks = 48000000 / USB_LS_RATE,
 };
@@ -144,7 +175,9 @@ static int usb_convert_phy_to_mac(uint8_t *input, uint8_t *output, int bits) {
   return bytes;
 }
 
-static int usb_convert_mac_to_phy(uint8_t *input, uint8_t *output, int bytes) {
+static int usb_convert_mac_to_phy(const uint8_t *input,
+                                  uint8_t *output,
+                                  int bytes) {
 
   int out_bits;
   int input_byte;
@@ -221,9 +254,12 @@ void usbPhyGetStatistics(struct usb_phy_statistics *stats) {
   stats->underflow = stats_underflow;
   stats->overflow = stats_overflow;
   stats->timeout = stats_timeout;
-  stats->read_head = bit_buffer_read_head;
-  stats->write_head = bit_buffer_write_head;
-  stats->buffer_size = MAX_BIT_BUFFERS;
+  stats->in_read_head = bit_buffer_read_head;
+  stats->in_write_head = bit_buffer_write_head;
+  stats->in_buffer_size = MAX_BIT_BUFFERS;
+  stats->out_read_head = bit_queue_read_head;
+  stats->out_write_head = bit_queue_write_head;
+  stats->out_buffer_size = MAX_BIT_BUFFERS;
 }
 
 /* Convert one PHY packet to a USB MAC packet */
@@ -343,6 +379,10 @@ void usbStateTransitionI(void) {
 
 err:
   return;
+}
+
+int usbPhyWriteDirect(const uint8_t *buffer, int size) {
+  return usbPhyWrite(&usbPhy, buffer, size);
 }
 
 static THD_WORKING_AREA(waUsbBusyPollThread, 64);

@@ -121,35 +121,27 @@ static struct USBPHY {
   ldr val1, [reg]               // Sample USBDP
   and val1, val1, mask          // Mask off the interesting bit
 
-  mov r7, #6                    // The loop is 9 cycles on a failure.  One
-                                // pulse is 32 cycles.  Therefore, loop up
-                                // to 5 times before giving up.
-
-  /* Wait until midway through the next pulse */
-wait_for_line_flip:
+  // The loop is 4 cycles on a failure.  One
+  // pulse is 32 cycles.  Therefore, loop up
+  // to 9 times before giving up.
+.rept 11
   ldr val2, [reg]               // Sample USBDP
   and val2, val2, mask          // Mask off the interesting bit
-
-  sub r7, r7, #1
-  cmp r7, #0
-  beq timeout
-
   cmp val1, val2                // Wait for it to change
-  beq wait_for_line_flip
+  bne get_usb_bit_start
+.endr
+  b timeout
 
   // There should be about 16 instructions between "ldr" above and "ldr" below.
   // Minus up to 8 instructions for the "beq" path
-.rept 2
+get_usb_bit_start:
+.rept 0
   nop
 .endr
 
   /* Grab the next bit off the USB signals */
-  mov tmp, #0
-  mov lastbit, tmp              // Reset our last bit, to look for SE0
+  mov tmp, #4                   // Reset our last bit, to look for SE0
 get_usb_bit:
-.rept 4
-  nop
-.endr
 
   /* Now we're lined up in the middle of the pulse */
   ldr val1, [usbphy, #dpIAddr]  // load USBDP register into temp reg
@@ -158,27 +150,34 @@ get_usb_bit:
   ldr val2, [val2]              // Sample USBDN
 
   ldr shift, [usbphy, #dpShift] // Load the USBDP shift value
-  asr val1, val1, shift         // Shift the USBDP value down to bit 1
+  ror val1, val1, shift         // Shift the USBDP value down to bit 1
   mov mask, #1                  // Since it's bit 1, we'll mask by 1
   and val1, val1, mask          // Perform the mask by 0x1
 
   ldr shift, [usbphy, #dnShift] // Load the USBDN shift value
-                                // We want to shift by one less, to move to
-  sub shift, shift, #1          // bit 2, so subtract 1 from the shift.
-  asr val2, val2, shift         // Perform the shift
-  mov mask, #2                  // Now, mask the value by 2.
-  and val2, val2, mask          // Perform the mask by 0x2.
+  ror val2, val2, shift         // Perform the shift
+  mov mask, #1                  // Load 0x1, for the mask operation.
+  and val2, val2, mask          // Perform the mask by 0x1.
+
+                                // Move it up to bit 2, so we can or the
+  lsl val2, val2, mask          // two values together (reusing the mask value)
 
   orr val1, val1, val2          // OR the two bits together.
 
   strb val1, [samples]          // Store the value in our sample buffer.
 
-  add lastbit, lastbit, val1    // An end-of-frame is indicated by two
+  //add mask, mask, usbphy // XXX
+  add tmp, tmp, val1    // An end-of-frame is indicated by two
                                 // frames of SE0.  If this is the case,
                                 // then the result of adding these together
                                 // will result in 0.
+  cmp tmp, #0
   beq exit                      // Exit if so.
-  mov lastbit, val1
+  mov tmp, val1
+
+.rept 1 // Number of spare cycles to use
+  nop
+.endr
 
   add samples, samples, #1      // Move the sample buffer up by 1.
   sub count, count, #1          // Subtract 1 from the max sample number.
@@ -197,6 +196,7 @@ exit:
   mov count, samples
   pop {samples,r4,r5,r6,r7}
   sub r0, count, samples        // Report how many bits we received
+  sub r0, r0, #1                // Remove extra trailing SE0
   bx lr
 
 timeout:

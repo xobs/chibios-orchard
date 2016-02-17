@@ -52,6 +52,21 @@ val2    .req r6
 tmp     .req r7
 lastbit .req r12
 
+/* usbphy offsets */
+.equ dpIAddr,0x00
+.equ dpSAddr,0x04
+.equ dpCAddr,0x08
+.equ dpDAddr,0x0c
+.equ dpMask,0x10
+.equ dpShift,0x14
+
+.equ dnIAddr,0x18
+.equ dnSAddr,0x1c
+.equ dnCAddr,0x20
+.equ dnDAddr,0x24
+.equ dnMask,0x28
+.equ dnShift,0x2c
+
 /* Variables in use:
   usbphy   -- Pointer to a USBPHY struct
   samples  -- Pointer to the sampled values
@@ -75,15 +90,20 @@ lastbit .req r12
   // r2 is the number of [remaining] max samples
   // r3 is the FGPIO offset
 
-/*
 static struct USBPHY {
-  uint32_t usbdpAddr;
-  uint32_t usbdpMask;
-  uint32_t usbdpShift;
+  uint32_t dpIAddr;
+  uint32_t dpSAddr;
+  uint32_t dpCAddr;
+  uint32_t dpDAddr;
+  uint32_t dpMask;
+  uint32_t dpShift;
 
-  uint32_t usbdnAddr;
-  uint32_t usbdnMask;
-  uint32_t usbdnShift;
+  uint32_t dnIAddr;
+  uint32_t dnSAddr;
+  uint32_t dnCAddr;
+  uint32_t dnDAddr;
+  uint32_t dnMask;
+  uint32_t dnShift;
 
   uint32_t ticks;
 } __attribute__((__packed__));
@@ -94,10 +114,8 @@ static struct USBPHY {
 /*int */usbPhyRead/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
   push {samples,r4,r5,r6,r7}
 
-//  ldr reg, [usbphy, #12]         // load the gpio register into r3
-//  ldr mask, [usbphy, #16]        // Mask to get USB line bit from register
-  ldr reg, [usbphy, #0]         // load the gpio register into r3
-  ldr mask, [usbphy, #4]        // Mask to get USB line bit from register
+  ldr reg, [usbphy, #dpIAddr]   // load the gpio register into r3
+  ldr mask, [usbphy, #dpMask]   // Mask to get USB line bit from register
 
   /* Wait for the line to shift */
   ldr val1, [reg]               // Sample USBDP
@@ -134,17 +152,17 @@ get_usb_bit:
 .endr
 
   /* Now we're lined up in the middle of the pulse */
-  ldr val1, [usbphy, #0]        // load USBDP register into temp reg
-  ldr val2, [usbphy, #12]       // load USBDN register into temp reg
+  ldr val1, [usbphy, #dpIAddr]  // load USBDP register into temp reg
+  ldr val2, [usbphy, #dnIAddr]  // load USBDN register into temp reg
   ldr val1, [val1]              // Sample USBDP
   ldr val2, [val2]              // Sample USBDN
 
-  ldr shift, [usbphy, #8]       // Load the USBDP shift value
+  ldr shift, [usbphy, #dpShift] // Load the USBDP shift value
   asr val1, val1, shift         // Shift the USBDP value down to bit 1
   mov mask, #1                  // Since it's bit 1, we'll mask by 1
   and val1, val1, mask          // Perform the mask by 0x1
 
-  ldr shift, [usbphy, #20]      // Load the USBDN shift value
+  ldr shift, [usbphy, #dnShift] // Load the USBDN shift value
                                 // We want to shift by one less, to move to
   sub shift, shift, #1          // bit 2, so subtract 1 from the shift.
   asr val2, val2, shift         // Perform the shift
@@ -190,6 +208,113 @@ timeout:
 .type usbPhyRead, %function
 .size usbPhyRead, .-usbPhyRead
 
+
+
+/*
+ * Registers:
+ *   r0: USBPHY
+ *   r1: sample buffer
+ *   r2: number of samples to write
+ *   r3: dp set/clear
+ *   r4: dn set/clear
+ *   r5: dp mask
+ *   r6: dn mask
+ *   r7: tmp
+ */
+.func usbPhyWrite
+.global usbPhyWrite
+/*int */usbPhyWrite/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
+  push {r4,r5,r6,r7}
+  // First, set both lines to OUTPUT
+  ldr reg, [usbphy, #dpDAddr]   // Get the direction address
+  ldr val1, [reg]               // Get the direction value
+  ldr val2, [usbphy, #dpMask]   // Get the mask value for ORing in
+  orr val1, val1, val2          // Set the direciton mask
+  ldr reg, [usbphy, #dpDAddr]   // Get the direction address
+  str val1, [reg]               // Set the direction for Dp
+
+  ldr reg, [usbphy, #dnDAddr]   // Get the direction address
+  ldr val1, [reg]               // Get the direction value
+  ldr val2, [usbphy, #dnMask]   // Get the mask value for ORing in
+  orr val1, val1, val2          // Set the direciton mask
+  ldr reg, [usbphy, #dnDAddr]   // Get the direction address
+  str val1, [reg]               // Set the direction for Dp
+
+  ldr r5, [usbphy, #dpMask]
+  ldr r6, [usbphy, #dnMask]
+
+usb_phy_write_top:
+
+.rept 3
+  nop                         // Padding to get to 1.5 MHz
+.endr
+
+  ldrb r7, [samples]          // Get the next sample to send
+
+  mov r3, #3                  // Mask the sample so that it's in the
+  and r7, r7, r3              // range of (0..3) so we don't jump out.
+
+   // Each branch has an equal number of cycles and is an equal size.
+   // Multiply the USB state (which is 0, 1, 2, or 3) by the size of
+   // one cycle, to act as a jump table.
+  mov r3, #(usb_phy_write_j - usb_phy_write_k)
+  mul r7, r7, r3
+
+  ldr r3, =usb_phy_write_se0  // Figure out the jump target, relative to the
+  add r3, r7, r3              // start of the jump section.
+
+  mov pc, r3                  // Jump into the table below.
+
+  // Jump Table: Write SE0, K, J, or SE1 to the USB pins.
+usb_phy_write_se0:
+  ldr r3, [usbphy, #dpCAddr]
+  ldr r4, [usbphy, #dnCAddr]
+  b usb_phy_commit_values
+usb_phy_write_k:
+  ldr r3, [usbphy, #dpCAddr]
+  ldr r4, [usbphy, #dnSAddr]
+  b usb_phy_commit_values
+usb_phy_write_j:
+  ldr r3, [usbphy, #dpSAddr]
+  ldr r4, [usbphy, #dnCAddr]
+  b usb_phy_commit_values
+usb_phy_write_se1:
+  ldr r3, [usbphy, #dpSAddr]
+  ldr r4, [usbphy, #dnSAddr]
+  b usb_phy_commit_values
+
+usb_phy_commit_values:
+  str r5, [r3]                  // Write the computed states to the USB
+  str r6, [r4]                  // pins, setting them or clearing as needed.
+
+  add samples, samples, #1      // Move on to the next sample.
+  sub count, count, #1          // Subtract 1 from the total sample number.
+  cmp count, #0                 // See if there are any samples left to send.
+  bne usb_phy_write_top         // If so, send another bit.
+
+  // Now, set both lines to INPUT
+  ldr reg, [usbphy, #dpDAddr]   // Get the direction address
+  ldr val1, [reg]               // Get the direction value
+  ldr val2, [usbphy, #dpMask]   // Get the mask value for ORing in
+  bic val1, val1, val2          // Clear the direciton mask
+  ldr reg, [usbphy, #dpDAddr]   // Get the direction address
+  str val1, [reg]               // Set the direction for Dp
+
+  ldr reg, [usbphy, #dnDAddr]   // Get the direction address
+  ldr val1, [reg]               // Get the direction value
+  ldr val2, [usbphy, #dnMask]   // Get the mask value for ORing in
+  bic val1, val1, val2          // Clear the direciton mask
+  ldr reg, [usbphy, #dnDAddr]   // Get the direction address
+  str val1, [reg]               // Set the direction for Dp
+
+  // Return the value
+  mov count, samples
+  pop {r4,r5,r6,r7}
+  sub r0, count, samples        // Report how many bits we received
+  bx lr
+.endfunc
+.type usbPhyWrite, %function
+.size usbPhyWrite, .-usbPhyWrite
 
 /*
 .align  2

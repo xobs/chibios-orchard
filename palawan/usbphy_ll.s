@@ -1,56 +1,42 @@
+#if 0
 .text
 
-  /******************************************************
+  /***************************************************************************
    * USB PHY low-level code
    * 
    * Exports the following functions:
    *
-   *    int usbPhyRead(USBPhy *phy, uint8_t *buffer)
-   *    void usbPhyWrite(USBPhy *phy, uint8_t buffer, uint32_t count)
+   *    int usbPhyRead(USBPhy *phy, uint8_t buffer[11])
+   *    void usbPhyWrite(USBPhy *phy, uint8_t buffer[11], uint32_t count)
    *
    * Interrupts are disabled during this code, since it is time-critical.
-   * Additionally, timing is maintained by examining the SysTick timer,
-   * so it is reconfigured during the course of running this code.
+   * Note that as a Kinetis "feature", jumps of more than 48 bytes can
+   * cause random amounts of jitter.  Make sure you don't do that.
    *
-   * A USB frame begins with the pattern KJKJKJKK.  Each bit takes about
-   * 666 nS, which at a 48 MHz clock rate gives us 32 cycles to read
-   * each bit.
+   * Both functions take the following struct as their first parameter:
    *
-   * An interrupt takes 16 clock cycles, and it probably took at least 32
-   * clock cycles to get here, meaning we've already lost the first KJ.
-   * The first thing to do is measure how many ticks it takes for a
-   * transition.  To do that, perform the following:
+   *  static struct USBPHY {
+   *    /* USB D- line descriptor */
+   *    uint32_t dpIAddr; /* GPIO "sample-whole-bank" address */
+   *    uint32_t dpSAddr; /* GPIO "set-pin-level" address */
+   *    uint32_t dpCAddr; /* GPIO "clear-pin-level" address */
+   *    uint32_t dpDAddr; /* GPIO "pin-direction" address, where 1 = output */
+   *    uint32_t dpMask;  /* Mask of GPIO pin in S/C/D/I addresses */
+   *    uint32_t dpShift; /* Shift of GPIO pin in S/C/D/I addresses */
    *
-   *    0) Load a large value into SysTick Current
-   *    1) Wait for the line to transition
-   *    2) Compare the SysTick current
-   *    3) Divide by two, subtract residual cycles, and load that value
-   *       into SysTick current
-   *    4) Load the difference into SysTick reload
-   *    5) Wait for SysTick to loop
+   *    /* USB D+ line descriptor, as above */
+   *    uint32_t dnIAddr;
+   *    uint32_t dnSAddr;
+   *    uint32_t dnCAddr;
+   *    uint32_t dnDAddr;
+   *    uint32_t dnMask;
+   *    uint32_t dnShift;
    *
-   * At this point, we should be synchronized with the middle of the
-   * pulse.  SysTick will roll over once per clock cycle, in the middle,
-   * when it's good to sample.
-   *
-   * Now, wait for the end-of-sync pulse "KK" state.
-   *
-   * Continue reading bits in until we get a double-SE0.  Actually, any
-   * SE0 should be considered end-of-frame.
-   *
-   * Afterwards, restore the SysTick register.
+   *    /* Unused, but the number of CPU ticks/cycles for one USB bit */
+   *    uint32_t ticks;
+   * };
    */
 
-usbphy  .req r0
-samples .req r1
-count   .req r2
-reg     .req r3   // Offset to the GPIO block
-mask    .req r4   // Mask within the GPIO block
-shift   .req r4   // Shift within the GPIO block (shared with mask)
-val1    .req r5
-val2    .req r6
-tmp     .req r7
-lastbit .req r12
 
 /* usbphy offsets */
 .equ dpIAddr,0x00
@@ -90,54 +76,91 @@ lastbit .req r12
   // r2 is the number of [remaining] max samples
   // r3 is the FGPIO offset
 
-static struct USBPHY {
-  uint32_t dpIAddr;
-  uint32_t dpSAddr;
-  uint32_t dpCAddr;
-  uint32_t dpDAddr;
-  uint32_t dpMask;
-  uint32_t dpShift;
-
-  uint32_t dnIAddr;
-  uint32_t dnSAddr;
-  uint32_t dnCAddr;
-  uint32_t dnDAddr;
-  uint32_t dnMask;
-  uint32_t dnShift;
-
-  uint32_t ticks;
 } __attribute__((__packed__));
 */
+  /*
+   *
+   * Each USB bit takes about 666 nS, which at a 48 MHz clock rate gives us
+   * 32 cycles to read each bit.  This code runs on a Cortex M0+, where each
+   * instruction is one cycle, except taken-branches are three cycles.
+   *
+   * A USB frame begins with the pattern KJKJ...KK.  A USB frame ends with
+   * a double-SE0 state.  USB low-speed packets have an 8-bit sync period, and
+   * a maximum of 11 bytes.  Thus, a USB low-speed packet looks like this:
+   *
+   *     KJKJKJKK | data | 00
+   *
+   * Our usbReadData() code will start by positioning ourselves in the
+   * middle of a pulse.  We do that by samping the line, then waiting for
+   * it to change, then waiting some number of cycles.
+   *
+   * Once we're positioned, we then start looking for the KK end-of-sync
+   * indicator.  An interrupt takes 16 clock cycles, and it probably took
+   * at least 32 clock cycles to get here, meaning we've already lost the
+   * first KJ.  This is fine, as we just need to look for "KK" to indicate
+   * the end of the sync period.
+   *
+   * Since a USB low-speed packet is at most 11 bytes, we can store this in
+   * three 32-bit registers.  We chain three registers together in a shift-
+   * chain by self-adding-with-carry on each of the three registers in
+   * sequence to move the top bit from one into the bottom bit of the next.
+   *
+   * Add a 1 to the low register if the state is the same as the previous
+   * state, and add a 0 to the low register if the state has changed.
+   *
+   * As a special case, when we get six consecutive bits in a row (i.e. six
+   * ones or six zeroes), the host will "stuff" one bit and flip the state,
+   * meaning we should ignore that 1-bit.  If this is the case, the shift
+   * should not be processed.
+   *
+   * Continue reading bits in until we get a double-SE0.  Actually, any
+   * SE0 should be considered end-of-frame.
+   *
+   * r0
+   */
+usbphy  .req r0   /* Pointer to the USBPHY struct, described above */
+outptr  .req r1   /* Outgoing sample buffer */
+reg     .req r2   /* Register to sample pin */
+mask    .req r3   /* Mask to isolate required pin */
+val     .req r4   /* Currently-sampled value */
+lastval .req r5   /* What value was the last pin? */
+
+sample1 .req r7   /* Most recent 32-bits */
+sample2 .req r8   /* Next 32-bits */
+sample3 .req r9   /* Remaining 24-bits */
 
 .func usbPhyRead
 .global usbPhyRead
-/*int */usbPhyRead/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
+/*int */usbPhyRead/*(const USBPHY *phy, uint8_t samples[11])*/:
   push {samples,r4,r5,r6,r7}
+
+  /* Clear out the register shift-chain */
+  mov r7, #0
+  mov r8, #0
+  mov r9, #0
 
   ldr reg, [usbphy, #dpIAddr]   // load the gpio register into r3
   ldr mask, [usbphy, #dpMask]   // Mask to get USB line bit from register
 
   /* Wait for the line to shift */
-  ldr val1, [reg]               // Sample USBDP
-  and val1, val1, mask          // Mask off the interesting bit
+  ldr lastval, [reg]            // Sample USBDP
+  and lastval, lastval, mask    // Mask off the interesting bit
 
   // The loop is 4 cycles on a failure.  One
   // pulse is 32 cycles.  Therefore, loop up
   // to 9 times before giving up.
 .rept 11
-  ldr val2, [reg]               // Sample USBDP
-  and val2, val2, mask          // Mask off the interesting bit
-  cmp val1, val2                // Wait for it to change
-  bne get_usb_bit_start
+  ldr val, [reg]                // Sample USBDP
+  and val, val, mask            // Mask off the interesting bit
+  cmp val, lastval              // Wait for it to change
+  bne usb_phy_read_sync_wait
 .endr
-  b timeout
+  b usb_phy_read_timeout
 
+usb_phy_read_sync_wait:
   // There should be about 16 instructions between "ldr" above and "ldr" below.
   // Minus up to 8 instructions for the "beq" path
-get_usb_bit_start:
-.rept 0
-  nop
-.endr
+  b wait_13_cycles
 
   /* Grab the next bit off the USB signals */
   mov tmp, #4                   // Reset our last bit, to look for SE0
@@ -207,6 +230,12 @@ timeout:
 .endfunc
 .type usbPhyRead, %function
 .size usbPhyRead, .-usbPhyRead
+.global usbPhyRead_size
+.align 4
+usbPhyRead_size: .long usbPhyRead, .-usbPhyRead
+
+.global usbPhyRead_end
+usbPhyRead_end: nop
 
 
 
@@ -315,6 +344,11 @@ usb_phy_commit_values:
 .endfunc
 .type usbPhyWrite, %function
 .size usbPhyWrite, .-usbPhyWrite
+.global usbPhyWrite_size
+.align 4
+usbPhyWrite_size: .long usbPhyWrite, .-usbPhyWrite
+.global usbPhyWrite_end
+usbPhyWrite_end: nop
 
 /*
 .align  2
@@ -355,3 +389,66 @@ SysTick_BASE:
 .word 0xE000E000
 
 .end
+#endif
+
+
+.func usbPhyWrite
+.global usbPhyWrite
+/*int */usbPhyWrite/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
+  bx lr
+.type usbPhyWrite, %function
+.size usbPhyWrite, .-usbPhyWrite
+.endfunc
+
+.func usbPhyRead
+.global usbPhyRead
+/*int */usbPhyRead/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
+  bx lr
+.type usbPhyRead, %function
+.size usbPhyRead, .-usbPhyRead
+.endfunc
+
+.func usbPhyTime
+.global usbPhyTime
+/*int */usbPhyTime/*(volatile uint32_t *reg, uint32_t val)*/:
+  str r1, [r0]
+  str r1, [r0]
+  str r1, [r0]
+  str r1, [r0]
+  str r1, [r0]
+  str r1, [r0]
+  bl wait_10_cycles
+
+.rept 16
+  str r1, [r0]
+  bl wait_10_cycles
+.endr
+  str r1, [r0]
+  bl wait_8_cycles
+  b usbPhyTime /* 2 cycles */
+
+
+wait_16_cycles: nop
+wait_15_cycles: nop
+wait_14_cycles: nop
+wait_13_cycles: nop
+wait_12_cycles: nop
+wait_11_cycles: nop
+wait_10_cycles: nop
+wait_9_cycles:  nop
+wait_8_cycles:  nop
+wait_7_cycles:  nop
+wait_6_cycles:  nop
+wait_5_cycles:  mov pc, lr
+wait_4_cycles:  nop
+wait_3_cycles:  nop
+wait_2_cycles:  nop
+wait_1_cycles:  nop
+.type usbPhyTime, %function
+.size usbPhyTime, .-usbPhyTime
+.endfunc
+.global usbPhyTime_end
+usbPhyTime_end: nop
+.global usbPhyTime_size
+.align 4
+usbPhyTime_size: .long usbPhyTime, .-usbPhyTime

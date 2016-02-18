@@ -187,8 +187,9 @@ int main(void)
   *((volatile uint32_t *)0xf8000114) |= 0x3;
   chSysLock();
 
-  memfunc_load(usbPhyTime, usbPhyTime_ram);
-  memfunc_call(usbPhyTime_ram, 0xf800010c, 3);
+  usbPhyTime(0xf800010c, 3);
+//  memfunc_load(usbPhyTime, usbPhyTime_ram);
+//  memfunc_call(usbPhyTime_ram, 0xf800010c, 3);
 
 #if 0
   /* Generate a 1.5 MHz tone, to simulate USB */

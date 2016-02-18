@@ -411,23 +411,21 @@ SysTick_BASE:
 .func usbPhyTime
 .global usbPhyTime
 /*int */usbPhyTime/*(volatile uint32_t *reg, uint32_t val)*/:
+.rept 128
   str r1, [r0]
-  str r1, [r0]
-  str r1, [r0]
-  str r1, [r0]
-  str r1, [r0]
-  str r1, [r0]
-  bl wait_10_cycles
-
-.rept 16
-  str r1, [r0]
-  bl wait_10_cycles
-.endr
   str r1, [r0]
   bl wait_8_cycles
-  b usbPhyTime /* 2 cycles */
+.endr
+  str r1, [r0]
+  str r1, [r0]
+  nop
+  nop
+  nop
+  nop
+  nop
+  b usbPhyTime /* 3 cycles */
 
-
+/* This has been validated when running from RAM */
 wait_16_cycles: nop
 wait_15_cycles: nop
 wait_14_cycles: nop
@@ -438,12 +436,8 @@ wait_10_cycles: nop
 wait_9_cycles:  nop
 wait_8_cycles:  nop
 wait_7_cycles:  nop
-wait_6_cycles:  nop
-wait_5_cycles:  mov pc, lr
-wait_4_cycles:  nop
-wait_3_cycles:  nop
-wait_2_cycles:  nop
-wait_1_cycles:  nop
+wait_6_cycles:  mov pc, lr
+/* Less than 6 cycles, call nop. */
 .type usbPhyTime, %function
 .size usbPhyTime, .-usbPhyTime
 .endfunc

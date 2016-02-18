@@ -37,6 +37,18 @@
    * };
    */
 
+wait_16_cycles: nop
+wait_15_cycles: nop
+wait_14_cycles: nop
+wait_13_cycles: nop
+wait_12_cycles: nop
+wait_11_cycles: nop
+wait_10_cycles: nop
+wait_9_cycles:  nop
+wait_8_cycles:  nop
+wait_7_cycles:  nop
+wait_6_cycles:  mov pc, lr
+/* Less than 6 cycles, call nop. */
 
 /* usbphy offsets */
 .equ dpIAddr,0x00
@@ -53,31 +65,6 @@
 .equ dnMask,0x28
 .equ dnShift,0x2c
 
-/* Variables in use:
-  usbphy   -- Pointer to a USBPHY struct
-  samples  -- Pointer to the sampled values
-  count    -- Maximum size of the sample array
-  gpio     -- Offset to GPIO block
-  usbdpo   -- Offset to register bank for USBDP GPIO
-  usbdno   -- Offset to register bank for USBDN GPIO
-  usbdps   -- Shift for USBDP GPIO
-  usbdns   -- Shift for USBDN GPIO (plus 1)
-  usbdpm   -- Mask for USBDP GPIO
-  usbdnm   -- Mask for USBDN GPIO
-  systick  -- Offset to SysTick register
-  ticks    -- Number of ticks per frame
-  tickcfg  -- SysTick config, mostly interested in whether it's rolled over
-  usbdp    -- Sample of USBDP
-  usbdn    -- Sample of USBDS
-
-
-  // r0 is the USBPHY struct (see below)
-  // r1 is the sample buffer
-  // r2 is the number of [remaining] max samples
-  // r3 is the FGPIO offset
-
-} __attribute__((__packed__));
-*/
   /*
    *
    * Each USB bit takes about 666 nS, which at a 48 MHz clock rate gives us
@@ -160,7 +147,10 @@ sample3 .req r9   /* Remaining 24-bits */
 usb_phy_read_sync_wait:
   // There should be about 16 instructions between "ldr" above and "ldr" below.
   // Minus up to 8 instructions for the "beq" path
-  b wait_13_cycles
+  bx wait_13_cycles
+
+  ldr val, [reg]                // Sample USBDP
+  and val, val, mask            // Mask off the interesting bit
 
   /* Grab the next bit off the USB signals */
   mov tmp, #4                   // Reset our last bit, to look for SE0
@@ -389,7 +379,8 @@ SysTick_BASE:
 .word 0xE000E000
 
 .end
-#endif
+
+#else
 
 
 .func usbPhyWrite
@@ -411,21 +402,36 @@ SysTick_BASE:
 .func usbPhyTime
 .global usbPhyTime
 /*int */usbPhyTime/*(volatile uint32_t *reg, uint32_t val)*/:
-.rept 128
+.rept 32
   str r1, [r0]
   str r1, [r0]
-  bl wait_8_cycles
+  bl wait_14_cycles
 .endr
+in_loop:
+b in_loop
   str r1, [r0]
   str r1, [r0]
   nop
   nop
+
   nop
   nop
   nop
-  b usbPhyTime /* 3 cycles */
+  nop
+
+  nop
+  nop
+  nop
+  nop
+
+  nop
+  nop
+  b usbPhyTime /* 2 cycles */
 
 /* This has been validated when running from RAM */
+.type usbPhyTime, %function
+.size usbPhyTime, .-usbPhyTime
+.endfunc
 wait_16_cycles: nop
 wait_15_cycles: nop
 wait_14_cycles: nop
@@ -434,15 +440,13 @@ wait_12_cycles: nop
 wait_11_cycles: nop
 wait_10_cycles: nop
 wait_9_cycles:  nop
-wait_8_cycles:  nop
+wait_8_cycles:  nop /* mov pc, lr */ /* When running out of Flash (sometimes) */
 wait_7_cycles:  nop
-wait_6_cycles:  mov pc, lr
-/* Less than 6 cycles, call nop. */
-.type usbPhyTime, %function
-.size usbPhyTime, .-usbPhyTime
-.endfunc
+wait_6_cycles:  nop
+wait_5_cycles:  mov pc, lr
 .global usbPhyTime_end
 usbPhyTime_end: nop
 .global usbPhyTime_size
 .align 4
 usbPhyTime_size: .long usbPhyTime, .-usbPhyTime
+#endif

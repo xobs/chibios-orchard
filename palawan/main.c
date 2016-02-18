@@ -117,58 +117,9 @@ static void print_mcu_info(void) {
  */
 int loop_counter = 0;
 int last_ret;
-extern int usbPhyTime(uint32_t reg, uint32_t val);
-//int memfunc_length_1;
-//int memfunc_length_2;
-//uint32_t src_start;
-//uint32_t src_end;
-/* We add [memfunc_name]_end at the end of the function to resolve symbols */
-#define memfunc_length(x) ((uint32_t)(((uint32_t)x ## _end) - ((uint32_t)x))+1)
-#define memfunc_size(x) ((uint32_t)((uint32_t )x ## _size))
-#define memfunc_load(func, ramname) \
-  extern void (func ## _end)(void); \
-  extern int *func ## _size; \
-  uint32_t ramname[memfunc_size(func) / 4]; \
-  do { \
-    unsigned int i; \
-    uint32_t *ptr = (uint32_t *)(((uint32_t)func) & ~1); \
-    for (i = 0; i < sizeof(ramname) / 4; i++) \
-      ramname[i] = ptr[i]; \
-  } while(0)
 
-#define GET_MACRO(_0,_1,_2,_3,_4,_5,_6,_7,_8_,_9,NAME,...) NAME
-#define memfunc_call(...) GET_MACRO(_0, ##__VA_ARGS__, memfunc_call9, memfunc_call8, memfunc_call7, memfunc_call6, memfunc_call5, memfunc_call4, memfunc_call3, memfunc_call2, memfunc_call1, memfunc_call0)(__VA_ARGS__)
-
-#define memfunc_call5(name, a1, a2, a3, a4) \
-  do { \
-    void (*tmp)(uint32_t, uint32_t, uint32_t, uint32_t) = ((void *)(((uint32_t)name) + 1)); \
-    tmp((uint32_t)a1, (uint32_t)a2, (uint32_t)a3, (uint32_t)a4); \
-  } while(0);
-
-#define memfunc_call4(name, a1, a2, a3) \
-  do { \
-    void (*tmp)(uint32_t, uint32_t, uint32_t) = ((void *)(((uint32_t)name) + 1)); \
-    tmp((uint32_t)a1, (uint32_t)a2, (uint32_t)a3); \
-  } while(0);
-
-#define memfunc_call3(name, a1, a2) \
-  do { \
-    void (*tmp)(uint32_t, uint32_t) = ((void *)(((uint32_t)name) + 1)); \
-    tmp((uint32_t)a1, (uint32_t)a2); \
-  } while(0);
-
-#define memfunc_call2(name, a1) \
-  do { \
-    void (*tmp)(uint32_t) = ((void *)(((uint32_t)name) + 1)); \
-    tmp((uint32_t)a1); \
-  } while(0);
-
-#define memfunc_call1(name) \
-  do { \
-    void (*tmp)(void) = ((void *)(((uint32_t)name) + 1)); \
-    tmp(); \
-  } while(0);
-
+extern void usbPhyTime(int, int);
+#include "memfunc.h"
 int main(void)
 {
   evtTableInit(palawan_events, 32);
@@ -183,14 +134,15 @@ int main(void)
   halInit();
   chSysInit();
 
-  //FGPIOE->PDIR |= 3;
+
+#if 1
   *((volatile uint32_t *)0xf8000114) |= 0x3;
   chSysLock();
+//  memfunc_load(usbPhyTime, ramtime);
+//  memfunc_call(ramtime, 0xf800010c, 3);
 
   usbPhyTime(0xf800010c, 3);
-//  memfunc_load(usbPhyTime, usbPhyTime_ram);
-//  memfunc_call(usbPhyTime_ram, 0xf800010c, 3);
-
+#endif
 #if 0
   /* Generate a 1.5 MHz tone, to simulate USB */
   *((volatile uint32_t *)0xf8000114) |= 0x3;

@@ -257,7 +257,7 @@ usb_phy_write_top:
    // Each branch has an equal number of cycles and is an equal size.
    // Multiply the USB state (which is 0, 1, 2, or 3) by the size of
    // one cycle, to act as a jump table.
-  mov r3, #(usb_phy_write_j - usb_phy_write_k)
+  mov r3, #(usb_phy_write_k - usb_phy_write_j)
   mul r7, r7, r3
 
   ldr r3, =usb_phy_write_se0  // Figure out the jump target, relative to the
@@ -270,11 +270,11 @@ usb_phy_write_se0:
   ldr r3, [usbphy, #dpCAddr]
   ldr r4, [usbphy, #dnCAddr]
   b usb_phy_commit_values
-usb_phy_write_k:
+usb_phy_write_j:
   ldr r3, [usbphy, #dpCAddr]
   ldr r4, [usbphy, #dnSAddr]
   b usb_phy_commit_values
-usb_phy_write_j:
+usb_phy_write_k:
   ldr r3, [usbphy, #dpSAddr]
   ldr r4, [usbphy, #dnCAddr]
   b usb_phy_commit_values

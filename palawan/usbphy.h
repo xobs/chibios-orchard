@@ -11,12 +11,16 @@ struct usb_phy_statistics {
   int underflow;
   int overflow;
   int timeout;
+  int no_end_of_sync;
+  int no_end_of_frame;
   int in_read_head;
   int in_write_head;
   int in_buffer_size;
   int out_read_head;
   int out_write_head;
   int out_buffer_size;
+  uint32_t *timestamps;
+  uint32_t timestamp_count;
 };
 
 void usbPhyGetStatistics(struct usb_phy_statistics *stats);

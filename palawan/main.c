@@ -54,7 +54,7 @@ static void shell_termination_handler(eventid_t id) {
 static void usb_process_incoming(eventid_t id) {
 
   (void)id;
-  usbProcessIncoming();
+//  usbProcessIncoming();
 }
 /*
 static void default_radio_handler(uint8_t type, uint8_t src, uint8_t dst,
@@ -113,6 +113,8 @@ static void print_mcu_info(void) {
 /*
  * Application entry point.
  */
+int loop_counter = 0;
+int last_ret;
 int main(void)
 {
 
@@ -164,11 +166,64 @@ int main(void)
     asm("nop");
     asm("nop");
     asm("nop");
+
+
+    *((volatile uint32_t *)0xf800010c) = 0x1;
+    asm("nop");
+
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
     asm("nop");
   }
 #endif
+#if 0
+  /* Generate a 1.5 MHz state transition, to test USB transmission */
+  enum state {
+    state_se0,
+    state_k,
+    state_j,
+    state_se1,
+  };
 
-  /* PTD6 and PTD5 */
+  uint8_t tmp_buffer[1024];
+  unsigned int i;
+  for (i = 0; i < sizeof(tmp_buffer); i += 2) {
+    tmp_buffer[i + 0] = state_k;
+    tmp_buffer[i + 1] = state_j;
+  }
+  extern int usbPhyWriteDirect(const uint8_t *buffer, int size);
+
+  while (1) {
+    last_ret = usbPhyWriteDirect(tmp_buffer, sizeof(tmp_buffer));
+    loop_counter++;
+  }
+#endif
+
   usbInit();
 
   palawanEventsStart();

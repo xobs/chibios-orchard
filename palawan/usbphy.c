@@ -1,3 +1,4 @@
+#include <string.h>
 
 #include "ch.h"
 #include "hal.h"
@@ -29,12 +30,18 @@ static uint8_t bit_buffer_read_head;
 
 static int usb_initialized;
 event_source_t usb_phy_data_available;
+static thread_reference_t usb_thread;
 
 static int stats_errors;
 static int stats_underflow;
 static int stats_overflow;
 static int stats_timeout;
 static int stats_num_packets;
+static int stats_no_end_of_sync;
+static int stats_no_end_of_frame;
+uint32_t stats_timestamps[256];
+uint32_t stats_timestamps_offset;
+#define stats_timestamps_offset_mask 0xff
 
 #define USB_FS_RATE 12000000 /* 12 MHz */
 #define USB_LS_RATE (USB_FS_RATE / 8) /* 1.5 MHz */
@@ -64,6 +71,7 @@ enum state {
   state_se1,
 };
 
+//#define USB_PHY_LL_DEBUG
 static const struct USBPHY usbPhy = {
 #if !defined(USB_PHY_LL_DEBUG)
   /* PTB0 */
@@ -82,6 +90,7 @@ static const struct USBPHY usbPhy = {
   .usbdnMask = (1 << 4),
   .usbdnShift = 4,
 #else
+#warning "Enabling debug pins"
   /* Pins J21 and J19 */
   /* PTD5 */
   .usbdpIAddr = &FGPIOD->PDIR,
@@ -130,12 +139,6 @@ static int usb_convert_phy_to_mac(uint8_t *input, uint8_t *output, int bits) {
   if (bit_num >= bits)
     return -1;
 
-//  for (bytes = 0; bit_num < bits; bytes++, bit_num++)
-//    output[bytes] = input[bit_num];
-
-  /* 00:KKJJJKKJKJKJKJKJKJKJKKJKJ */
-  /*     10110100 0000000000001000 */
-
   /* Convert bits to bytes, and unstuff runs */
   run_length = 0;
   last_bit = input[bit_num++]; /* Don't need to re-sample bit, since it's the same */
@@ -143,10 +146,7 @@ static int usb_convert_phy_to_mac(uint8_t *input, uint8_t *output, int bits) {
 
     acc = 0;  /* Reset the accumulator */
 
-//    for (byte_pos = 0; byte_pos < 8; byte_pos++) {
     for (byte_pos = 7; byte_pos >= 0; byte_pos--) {
-      if (bit_num > bits)
-        return -2;
       bit = input[bit_num++];
 
       /* No transition equals a 1 */
@@ -169,16 +169,17 @@ static int usb_convert_phy_to_mac(uint8_t *input, uint8_t *output, int bits) {
       last_bit = bit;
     }
 
+    if (bit_num > bits)
+      return -2;
     output[bytes++] = acc;
   }
 
   return bytes;
 }
 
-static int usb_convert_mac_to_phy(const uint8_t *input,
-                                  uint8_t *output,
+static int usb_convert_mac_to_phy(uint8_t *output,
+                                  const uint8_t *input,
                                   int bytes) {
-
   int out_bits;
   int input_byte;
   int input_bit;
@@ -210,7 +211,7 @@ static int usb_convert_mac_to_phy(const uint8_t *input,
         cur_state = last_state;
         run_length++;
 
-        /* Bit-stuff.  More than 6 1s in a row get turned into a 0 */
+        /* Bit-stuffing.  More than 6 1s in a row get turned into a 0 */
         if (run_length > 6) {
           if (cur_state == state_j)
             cur_state = state_k;
@@ -245,6 +246,9 @@ int usbPhyResetStatistics(void) {
   stats_num_packets = 0;
   stats_overflow = 0;
   stats_timeout = 0;
+  stats_no_end_of_sync = 0;
+  stats_no_end_of_frame = 0;
+  stats_timestamps_offset = 0;
   return 0;
 }
 
@@ -254,12 +258,16 @@ void usbPhyGetStatistics(struct usb_phy_statistics *stats) {
   stats->underflow = stats_underflow;
   stats->overflow = stats_overflow;
   stats->timeout = stats_timeout;
+  stats->no_end_of_sync = stats_no_end_of_sync;
+  stats->no_end_of_frame = stats_no_end_of_frame;
   stats->in_read_head = bit_buffer_read_head;
   stats->in_write_head = bit_buffer_write_head;
   stats->in_buffer_size = MAX_BIT_BUFFERS;
   stats->out_read_head = bit_queue_read_head;
   stats->out_write_head = bit_queue_write_head;
   stats->out_buffer_size = MAX_BIT_BUFFERS;
+  stats->timestamps = stats_timestamps;
+  stats->timestamp_count = stats_timestamps_offset;
 }
 
 /* Convert one PHY packet to a USB MAC packet */
@@ -282,8 +290,13 @@ int usb_convert_one_phy_to_mac(void) {
   /* If the packet size is negative, then there weren't an even number of
    * bits in a byte, after unstuffing and removing the header.
    */
-  if (packet_size < 0) {
-    stats_errors++;
+  if (packet_size <= 0) {
+    if (packet_size == -1)
+      stats_no_end_of_sync++;
+    else if (packet_size == -2)
+      stats_no_end_of_frame++;
+    else
+      stats_errors++;
     return -1;
   }
 
@@ -312,14 +325,17 @@ int usbProcessIncoming(void) {
 
 int usbPhyQueue(const uint8_t *buffer, int buffer_size) {
 
-  int bit_length = usb_convert_mac_to_phy(buffer,
-                                          bit_queues[bit_queue_write_head],
+  int bit_length = usb_convert_mac_to_phy(bit_queues[bit_queue_write_head],
+                                          buffer,
                                           buffer_size);
   if (bit_length <= 0)
     return bit_length;
 
   bit_queue_sizes[bit_queue_write_head] = bit_length;
   bit_queue_write_head = (bit_queue_write_head + 1) & MAX_BIT_BUFFERS_MASK;
+  osalSysLock();
+  osalThreadResumeI(&usb_thread, MSG_OK);
+  osalSysUnlock();
   return 0;
 }
 
@@ -338,10 +354,7 @@ void usbStateTransitionI(void) {
   int next_write_pos;
 
   /* Toggle the green LED */
-  *((volatile uint32_t *)0xf80000cc) = 0x80;
-
-  if (!usb_initialized)
-    return;
+//  *((volatile uint32_t *)0xf80000cc) = 0x80;
 
   next_write_pos = (bit_buffer_write_head + 1) & MAX_BIT_BUFFERS_MASK;
   if (next_write_pos == bit_buffer_read_head) {
@@ -353,7 +366,7 @@ void usbStateTransitionI(void) {
   bits_read = usbPhyRead(&usbPhy,
                          bit_buffers[bit_buffer_write_head],
                          BIT_BUFFER_SIZE);
-  if (bits_read < 0) {
+  if (bits_read <= 0) {
     if (bits_read == -1)
       stats_timeout++;
     else if (bits_read == -2)
@@ -362,6 +375,13 @@ void usbStateTransitionI(void) {
       stats_errors++;
     goto err;
   }
+#if defined(USB_PHY_LL_DEBUG)
+  /* Early escape, so we can examine bit_buffers[0] */
+  goto err;
+#endif
+
+  stats_timestamps[stats_timestamps_offset++] = 0x00010000 | SysTick->VAL;
+  stats_timestamps_offset &= stats_timestamps_offset_mask;
 
   /* Store the bit size for conversion at a later time. */
   bit_buffer_sizes[bit_buffer_write_head] = bits_read;
@@ -369,9 +389,15 @@ void usbStateTransitionI(void) {
   /* Increment the write head */
   bit_buffer_write_head = next_write_pos;
 
+  osalSysLockFromISR();
+  osalThreadResumeI(&usb_thread, MSG_OK);
+  osalSysUnlockFromISR();
+
   /* If a packet is queued, write it out */
   if (bit_queue_read_head != bit_queue_write_head) {
-    usbPhyWrite(&usbPhy,
+    stats_timestamps[stats_timestamps_offset++] = 0x00030000 | SysTick->VAL;
+    stats_timestamps_offset &= stats_timestamps_offset_mask;
+      usbPhyWrite(&usbPhy,
                 bit_queues[bit_queue_read_head],
                 bit_queue_sizes[bit_queue_read_head]);
     bit_queue_read_head = (bit_queue_read_head + 1) & MAX_BIT_BUFFERS_MASK;
@@ -382,18 +408,34 @@ err:
 }
 
 int usbPhyWriteDirect(const uint8_t *buffer, int size) {
-  return usbPhyWrite(&usbPhy, buffer, size);
+  uint8_t out_buffer[BIT_BUFFER_SIZE];
+  int bit_length;
+  
+  bit_length = usb_convert_mac_to_phy(out_buffer,
+                                      buffer,
+                                      size);
+
+  stats_timestamps[stats_timestamps_offset++] = 0x00020000 | SysTick->VAL;
+  stats_timestamps_offset &= stats_timestamps_offset_mask;
+
+  return usbPhyWrite(&usbPhy, out_buffer, bit_length);
 }
 
-static THD_WORKING_AREA(waUsbBusyPollThread, 64);
+static THD_WORKING_AREA(waUsbBusyPollThread, 256);
 static THD_FUNCTION(usb_busy_poll_thread, arg) {
 
   (void)arg;
 
   chRegSetThreadName("USB poll thread");
   while (1) {
-    chThdSleepMilliseconds(1);
-    if (bit_buffer_write_head != bit_buffer_read_head)
+    osalSysLock();
+    (void) osalThreadSuspendS(&usb_thread);
+    osalSysUnlock();
+
+    while (bit_buffer_read_head != bit_buffer_write_head) {
+      usb_convert_one_phy_to_mac();
+    }
+    if (usb_initialized)
       chEvtBroadcast(&usb_phy_data_available);
   }
 
@@ -408,7 +450,18 @@ void usbInit(void) {
 }
 
 OSAL_IRQ_HANDLER(KINETIS_PORTA_IRQ_VECTOR) {
+//  OSAL_IRQ_PROLOGUE();
+  PORT_IRQ_PROLOGUE();
+
   /* Clear all pending interrupts on this port. */
-  PORTA->ISFR = 0xFFFFFFFF;
   usbStateTransitionI();
+  PORTA->ISFR = 0xFFFFFFFF;
+  PORT_IRQ_EPILOGUE();
+//  OSAL_IRQ_EPILOGUE();
+}
+
+const uint8_t *usb_get_buffer_num(int num, int *sz) {
+  if (sz)
+    *sz = BIT_BUFFER_SIZE;
+  return bit_buffers[num];
 }

@@ -21,11 +21,6 @@
 #include "palawan-shell.h"
 
 #if 0
-extern uint8_t *usbGetSamples(int *count);
-extern uint8_t *usbGetSampleRun(int *count, int thisrun);
-extern int usbGetRun(void);
-extern int usbMaxRuns(void);
-
 static void usb_phy_decode(BaseSequentialStream *chp, uint8_t *samples, int count) {
   int i;
 
@@ -48,40 +43,44 @@ static void usb_phy_decode(BaseSequentialStream *chp, uint8_t *samples, int coun
       chprintf(chp, "?(%x)", samples[i]);
   }
 }
-
-void usbResetRun(void);
 #endif
 
 void cmd_usbla(BaseSequentialStream *chp, int argc, char *argv[])
 {
-#if 0
   int count;
   int i;
   int run;
-  uint8_t *samples;
+  const uint8_t *samples;
   static char *states = "0KJ1";
 
   (void)argc;
   (void)argv;
+
+  const uint8_t *usb_get_buffer_num(int num, int *sz);
   
-  for (run = 0; run < usbGetRun(); run++) {
-    chprintf(chp, " %c run %02d:", run == usbGetRun()?'*':' ', run);
-    samples = usbGetSampleRun(&count, run);
+  for (run = 0; run < 16; run++) {
+    chprintf(chp, " run %02d: ", run);
+    samples = usb_get_buffer_num(run, &count);
 
     for (i = 0; i < count; i++)
-      chprintf(chp, " %02x", samples[i]);
-//      chprintf(chp, "%c", states[samples[i]]);
+      chprintf(chp, "%c", states[samples[i]]);
     chprintf(chp, "\r\n");
+
+    int diff = samples[0];
+    chprintf(chp, "diffs: ");
+    for (i = 1; i < count; i++) {
+      chprintf(chp, " %d", (samples[i] - diff) & 0x3);
+      diff = samples[i];
+    }
+    chprintf(chp, "\r\n");
+ //     chprintf(chp, " %02x", samples[i]);
 //    chprintf(chp, "           ");
 //    usb_phy_decode(chp, samples, count);
 //    chprintf(chp, "\r\n");
   }
-  usbResetRun();
-#endif
 
   (void)argc;
   (void)argv;
-  chprintf(chp, "Unimplemented.\r\n");
 }
 
 palawan_command("usbla", cmd_usbla);

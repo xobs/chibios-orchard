@@ -1,11 +1,12 @@
+#include <string.h>
 #include "ch.h"
 #include "hal.h"
 #include "usbphy.h"
 #include "usbmac.h"
 #include "palawan.h"
 
-#define MAX_PACKET_BUFFERS 64
-#define USB_PACKET_BUFFER_MASK 0x3f
+#define MAX_PACKET_BUFFERS 128
+#define USB_PACKET_BUFFER_MASK 0x7f
 
 static struct usb_packet usb_packets[MAX_PACKET_BUFFERS];
 static uint8_t usb_packet_write_head;
@@ -123,6 +124,11 @@ int usbMacInsert(uint8_t *temp_packet, int packet_size) {
     memcpy(usb_packets[usb_packet_write_head].data,
            temp_packet + 1,
            packet_size - 3);
+
+    /* XXX HACK */
+    uint8_t ack_byte = 0x4b;
+    //usbPhyQueue(&ack_byte, 1);
+    usbPhyWriteDirect(&ack_byte, 1);
     break;
 
   /* Token packets, with CRC-5 */

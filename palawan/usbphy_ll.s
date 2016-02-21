@@ -141,10 +141,10 @@ wait_6_cycles:  mov pc, lr
   mov sample1, #0
   mov sample2, #0
   mov sample3, #0
-  mov usbphybkp, usbphy
   mov counter, sample1
-  mov one, #3
-  mov unstuff, one                // Load 1 into unstuff reg, as the header
+  mov usbphybkp, usbphy
+  mov one, #0b11
+  mov unstuff, one                // Load 0b11 into unstuff reg, as the header
                                   // ends with the pattern KK, which starts
                                   // a run of two.
   mov one, #1
@@ -273,10 +273,12 @@ get_usb_bit:
   eor val, tmp                   // Check to see if the state has flipped
   mvn val, val                    // Invert, as the bits come across flipped
   and val, val, one
+
   mov mash, unstuff
   lsl mash, mash, one
   orr mash, mash, val
   mov unstuff, mash
+
   lsr val, val, one              // Shift the state into the carry bit
   adc sample1, sample1, sample1  // Propagate the carry bit up
   adc sample2, sample2, sample2  // Propagate the carry bit up
@@ -336,7 +338,7 @@ usb_unstuff:
 exit:
 
   mov one, #1
-.rept 8
+.rept 0
   lsr val, val, one              // Shift the state into the carry bit
   adc sample1, sample1, sample1  // Propagate the carry bit up
   adc sample2, sample2, sample2  // Propagate the carry bit up
@@ -351,21 +353,32 @@ exit:
   str sample2, [r2, #4]
   str sample3, [r2, #0]
 
-  /* Commit the number of bits read */
-  mov r0, counter
+  retval .req r0
+  dstptr .req r1
+  srcptr .req r2
+  dstoff .req r3
+  srcoff .req r4
+  endoff .req r5
+  tmpval .req r6
+
+  /* Count the number of bytes read (counter / 8) */
+  mov retval, counter
   mov r3, #3
-  asr r0, r0, r3
+  asr retval, retval, r3              // Number of bytes read (return value)
 
-  mov r3, r0
-  mov r4, #0
+  mov srcoff, retval
+  mov endoff, #12
+  sub srcoff, endoff, srcoff
+  mov dstoff, #0
+
 copy_loop_top:
-  ldrb r5, [r2, r4]
-  sub r3, r3, #1
+  ldrb tmpval, [srcptr, srcoff]
+  add srcoff, srcoff, #1
 
-  strb r5, [r1, r4]
-  add r4, r4, #1
+  strb tmpval, [dstptr, dstoff]
+  add dstoff, dstoff, #1
 
-  cmp r4, r0
+  cmp srcoff, endoff
   bne copy_loop_top
 final_exit:
   pop {r4,r5,r6,r7,pc}

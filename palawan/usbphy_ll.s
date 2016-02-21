@@ -14,8 +14,9 @@ sample3 .req r7   /* Remaining 24-bits */
 
 lastval .req r8   /* What value was the last pin? */
 usbphybkp .req r9
-counter  .req r10
-tmp .req r0
+counter .req r10
+unstuff .req r11
+tmp     .req r0
 
 #if 0
   /***************************************************************************
@@ -140,9 +141,13 @@ wait_6_cycles:  mov pc, lr
   mov sample1, #0
   mov sample2, #0
   mov sample3, #0
-  mov counter, sample1
-  mov one, #1
   mov usbphybkp, usbphy
+  mov counter, sample1
+  mov one, #3
+  mov unstuff, one                // Load 1 into unstuff reg, as the header
+                                  // ends with the pattern KK, which starts
+                                  // a run of two.
+  mov one, #1
 
   ldr reg, [usbphy, #dpIAddr]     // load the gpio register into r3
   ldr mash, [usbphy, #dpMask]     // Mask to get USB line bit from register
@@ -267,6 +272,11 @@ get_usb_bit:
   mov lastval, val
   eor val, tmp                   // Check to see if the state has flipped
   mvn val, val                    // Invert, as the bits come across flipped
+  and val, val, one
+  mov mash, unstuff
+  lsl mash, mash, one
+  orr mash, mash, val
+  mov unstuff, mash
   lsr val, val, one              // Shift the state into the carry bit
   adc sample1, sample1, sample1  // Propagate the carry bit up
   adc sample2, sample2, sample2  // Propagate the carry bit up
@@ -276,17 +286,15 @@ get_usb_bit:
   // Unstuff bits.  Six consecutive USB states will be followed by a dummy
   // state flip.  Ignore this.
   mov tmp, #0b111111              // Check to see if the next bit will be dummy
-  and tmp, sample1, tmp
-  mov one, #0b111111              // Check to see if the next bit will be dummy
-  cmp tmp, one
+  mov mash, unstuff
+  and mash, mash, tmp
+  cmp tmp, mash
+  beq usb_unstuff
 
   /* Restore values, increase counter */
   mov one, #1                     // Restore "one"
   mov usbphy, usbphybkp           // Restore "usbphy"
   add counter, counter, one
-
-  beq usb_unstuff
-  // 4
 
 
 #if !defined(USB_PHY_READ_TEST)
@@ -296,13 +304,13 @@ get_usb_bit:
   // 2
 
 usb_unstuff:
+  mov one, #1                     // Restore "one"
+  mov unstuff, one
+  mov usbphy, usbphybkp           // Restore "usbphy"
+  add counter, counter, one
 // Just invert the value and ignore the next bit
 #if defined(USB_PHY_READ_TEST)
   ldr reg, [usbphy, #dnIAddr]
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
   add reg, reg, one
   add reg, reg, one
   add reg, reg, one

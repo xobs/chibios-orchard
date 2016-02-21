@@ -352,6 +352,8 @@ void usbStateTransitionI(void) {
 
   int bits_read;
   int next_write_pos;
+  uint8_t samples[11];
+  uint32_t scratch[3];
 
   /* Toggle the green LED */
 //  *((volatile uint32_t *)0xf80000cc) = 0x80;
@@ -363,10 +365,8 @@ void usbStateTransitionI(void) {
     goto err;
   }
 
-  bits_read = usbPhyRead(&usbPhy,
-                         bit_buffers[bit_buffer_write_head],
-                         BIT_BUFFER_SIZE);
-  if (bits_read <= 0) {
+  bits_read = usbPhyRead(&usbPhy, samples, scratch);
+  if (bits_read < 0) {
     if (bits_read == -1)
       stats_timeout++;
     else if (bits_read == -2)
@@ -451,12 +451,12 @@ void usbInit(void) {
 
 OSAL_IRQ_HANDLER(KINETIS_PORTA_IRQ_VECTOR) {
 //  OSAL_IRQ_PROLOGUE();
-  PORT_IRQ_PROLOGUE();
+//  PORT_IRQ_PROLOGUE();
 
   /* Clear all pending interrupts on this port. */
-  usbStateTransitionI();
+//  usbStateTransitionI();
   PORTA->ISFR = 0xFFFFFFFF;
-  PORT_IRQ_EPILOGUE();
+//  PORT_IRQ_EPILOGUE();
 //  OSAL_IRQ_EPILOGUE();
 }
 

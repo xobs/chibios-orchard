@@ -101,6 +101,7 @@ CSRC = main.c \
        palawan-vectors.c \
        usbphy.c \
        usbmac.c \
+       hex.c \
        $(wildcard cmd-*.c) \
        $(STARTUPSRC) \
        $(PORTSRC) \
@@ -153,7 +154,7 @@ INCDIR = $(STARTUPINC) $(KERNINC) $(PORTINC) $(OSALINC) \
 # Compiler settings
 #
 
-MCU  = cortex-m0
+MCU  = cortex-m0plus
 
 #TRGT = arm-elf-
 #TRGT = arm-none-eabi-

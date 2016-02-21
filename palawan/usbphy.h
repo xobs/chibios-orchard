@@ -27,8 +27,8 @@ void usbPhyGetStatistics(struct usb_phy_statistics *stats);
 int usbPhyResetStatistics(void);
 
 void usbInit(void);
-int usbPhyRead(const struct USBPHY *phy, uint8_t *samples, uint32_t count);
-int usbPhyWrite(const struct USBPHY *phy, const uint8_t *samples, uint32_t count);
+int usbPhyRead(const struct USBPHY *phy, uint8_t samples[11], uint32_t scratch[3]);
+int usbPhyWrite(const struct USBPHY *phy, const uint8_t samples[11], uint32_t count);
 int usbProcessIncoming(void);
 int usbPhyQueue(const uint8_t *buffer, int buffer_size);
 

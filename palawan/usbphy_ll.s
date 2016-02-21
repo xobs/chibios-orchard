@@ -1,6 +1,23 @@
-#if 0
 .text
 
+usbphy  .req r0   /* Pointer to the USBPHY struct, described above */
+outptr  .req r1   /* Outgoing sample buffer (pushed to stack) */
+
+one     .req r1   /* The value 1 */
+reg     .req r2   /* Register to sample pin */
+mash    .req r3   /* Mask/shift to isolate required pin */
+val     .req r4   /* Currently-sampled value */
+
+sample1 .req r5   /* Most recent 32-bits */
+sample2 .req r6   /* Next 32-bits */
+sample3 .req r7   /* Remaining 24-bits */
+
+lastval .req r8   /* What value was the last pin? */
+usbphybkp .req r9
+counter  .req r10
+tmp .req r0
+
+#if 0
   /***************************************************************************
    * USB PHY low-level code
    * 
@@ -36,6 +53,7 @@
    *    uint32_t ticks;
    * };
    */
+#endif
 
 wait_16_cycles: nop
 wait_15_cycles: nop
@@ -105,127 +123,282 @@ wait_6_cycles:  mov pc, lr
    *
    * r0
    */
-usbphy  .req r0   /* Pointer to the USBPHY struct, described above */
-outptr  .req r1   /* Outgoing sample buffer */
-reg     .req r2   /* Register to sample pin */
-mask    .req r3   /* Mask to isolate required pin */
-val     .req r4   /* Currently-sampled value */
-lastval .req r5   /* What value was the last pin? */
 
-sample1 .req r7   /* Most recent 32-bits */
-sample2 .req r8   /* Next 32-bits */
-sample3 .req r9   /* Remaining 24-bits */
+/* Define this to have dpIAddr and dnIAddr point to uint32_t arrays rather
+ * than GPIO banks.  This is used to test the code logic (but, obviously,
+ * not the code timing.)
+ */
+#define USB_PHY_READ_TEST
 
 .func usbPhyRead
 .global usbPhyRead
 /*int */usbPhyRead/*(const USBPHY *phy, uint8_t samples[11])*/:
-  push {samples,r4,r5,r6,r7}
+  push {r4, r5, r6, r7, lr}
+  push {outptr, r2}
 
   /* Clear out the register shift-chain */
-  mov r7, #0
-  mov r8, #0
-  mov r9, #0
+  mov sample1, #0
+  mov sample2, #0
+  mov sample3, #0
+  mov counter, sample1
+  mov one, #1
+  mov usbphybkp, usbphy
 
-  ldr reg, [usbphy, #dpIAddr]   // load the gpio register into r3
-  ldr mask, [usbphy, #dpMask]   // Mask to get USB line bit from register
+  ldr reg, [usbphy, #dpIAddr]     // load the gpio register into r3
+  ldr mash, [usbphy, #dpMask]     // Mask to get USB line bit from register
 
-  /* Wait for the line to shift */
-  ldr lastval, [reg]            // Sample USBDP
-  and lastval, lastval, mask    // Mask off the interesting bit
+  /* Wait for the line to flip */
+  ldr val, [reg]              // Sample USBDP
+  and val, val, mash      // Mask off the interesting bit
+  mov lastval, val
+
+#if defined(USB_PHY_READ_TEST)
+  /* Advance to the next sample */
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  str reg, [usbphy, #dpIAddr]     // Move read test register up by 4
+  ldr reg, [usbphy, #dnIAddr]
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  str reg, [usbphy, #dnIAddr]     // Move read test register up by 4
+  ldr reg, [usbphy, #dpIAddr]
+#endif /* defined(USB_PHY_READ_TEST) */
 
   // The loop is 4 cycles on a failure.  One
   // pulse is 32 cycles.  Therefore, loop up
   // to 9 times before giving up.
+#if !defined(USB_PHY_READ_TEST)
 .rept 11
-  ldr val, [reg]                // Sample USBDP
-  and val, val, mask            // Mask off the interesting bit
-  cmp val, lastval              // Wait for it to change
+  ldr val, [reg]                  // Sample USBDP
+  and val, val, mash              // Mask off the interesting bit
+  cmp val, lastval                // Wait for it to change
   bne usb_phy_read_sync_wait
 .endr
   b usb_phy_read_timeout
+#endif
 
 usb_phy_read_sync_wait:
   // There should be about 16 instructions between "ldr" above and "ldr" below.
   // Minus up to 8 instructions for the "beq" path
-  bx wait_13_cycles
+#if !defined(USB_PHY_READ_TEST)
+  bl usb_read_wait_13_cycles
+#endif /* !defined(USB_PHY_READ_TEST) */
 
-  ldr val, [reg]                // Sample USBDP
-  and val, val, mask            // Mask off the interesting bit
+.rept 7
+  ldr val, [reg]                  // Sample USBDP
+#if defined(USB_PHY_READ_TEST)
+  /* Advance to the next sample */
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  str reg, [usbphy, #dpIAddr]     // Move read test register up by 4
+  ldr reg, [usbphy, #dnIAddr]
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  str reg, [usbphy, #dnIAddr]     // Move read test register up by 4
+  ldr reg, [usbphy, #dpIAddr]
+#endif /* defined(USB_PHY_READ_TEST) */
+  and val, val, mash              // Mask off the interesting bit
+  cmp lastval, val
+  beq start_reading_usb
+  mov lastval, val
+#if !defined(USB_PHY_READ_TEST)
+  bl usb_read_wait_27_cycles
+#endif /* defined(USB_PHY_READ_TEST) */
+.endr
+  b usb_phy_read_timeout
 
-  /* Grab the next bit off the USB signals */
-  mov tmp, #4                   // Reset our last bit, to look for SE0
+  /* We're synced to the middle of a pulse, and the clock sync / start-of-
+   * -frame has been found.  Real packet data follows.
+   */
+start_reading_usb:
+
 get_usb_bit:
+  ldr reg, [usbphy, #dpIAddr]     // load the gpio register into r3
+  ldr mash, [usbphy, #dpShift]    // load the gpio register into r3
+  ldr val, [reg]                  // Sample USBDP
+  mov one, #1
+#if defined(USB_PHY_READ_TEST)
+  /* Advance to the next sample */
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  str reg, [usbphy, #dpIAddr]     // Move read test register up by 4
+#endif /* defined(USB_PHY_READ_TEST) */
+  ror val, val, mash              // Get it down to one bit
+  mov one, #1
+  and val, val, one               // And mask off everything else
 
-  /* Now we're lined up in the middle of the pulse */
-  ldr val1, [usbphy, #dpIAddr]  // load USBDP register into temp reg
-  ldr val2, [usbphy, #dnIAddr]  // load USBDN register into temp reg
-  ldr val1, [val1]              // Sample USBDP
-  ldr val2, [val2]              // Sample USBDN
-
-  ldr shift, [usbphy, #dpShift] // Load the USBDP shift value
-  ror val1, val1, shift         // Shift the USBDP value down to bit 1
-  mov mask, #1                  // Since it's bit 1, we'll mask by 1
-  and val1, val1, mask          // Perform the mask by 0x1
-
-  ldr shift, [usbphy, #dnShift] // Load the USBDN shift value
-  ror val2, val2, shift         // Perform the shift
-  mov mask, #1                  // Load 0x1, for the mask operation.
-  and val2, val2, mask          // Perform the mask by 0x1.
-
-                                // Move it up to bit 2, so we can or the
-  lsl val2, val2, mask          // two values together (reusing the mask value)
-
-  orr val1, val1, val2          // OR the two bits together.
-
-  strb val1, [samples]          // Store the value in our sample buffer.
-
-  //add mask, mask, usbphy // XXX
-  add tmp, tmp, val1    // An end-of-frame is indicated by two
+  // Check for SE0
+  ldr reg, [usbphy, #dnIAddr]
+#if defined(USB_PHY_READ_TEST)
+  ldr mash, [reg]
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  str reg, [usbphy, #dnIAddr]   // Move read test register up by 4
+  mov reg, mash
+#else
+  ldr reg, [reg]
+#endif /* defined(USB_PHY_READ_TEST) */
+  ldr mash, [usbphy, #dnShift]
+  ror reg, reg, mash
+  and reg, reg, one
+  add reg, reg, val  // An end-of-frame is indicated by two
                                 // frames of SE0.  If this is the case,
                                 // then the result of adding these together
                                 // will result in 0.
-  cmp tmp, #0
+  cmp reg, #0
   beq exit                      // Exit if so.
-  mov tmp, val1
+  ldr mash, [usbphy, #dpShift]
+  ldr reg, [usbphy, #dnIAddr]
+  // ??
 
-.rept 1 // Number of spare cycles to use
-  nop
-.endr
+  mov tmp, lastval
+  mov lastval, val
+  eor val, tmp                   // Check to see if the state has flipped
+  mvn val, val                    // Invert, as the bits come across flipped
+  lsr val, val, one              // Shift the state into the carry bit
+  adc sample1, sample1, sample1  // Propagate the carry bit up
+  adc sample2, sample2, sample2  // Propagate the carry bit up
+  adc sample3, sample3, sample3  // Propagate the carry bit up
+  // 10
 
-  add samples, samples, #1      // Move the sample buffer up by 1.
-  sub count, count, #1          // Subtract 1 from the max sample number.
+  // Unstuff bits.  Six consecutive USB states will be followed by a dummy
+  // state flip.  Ignore this.
+  mov tmp, #0b111111              // Check to see if the next bit will be dummy
+  and tmp, sample1, tmp
+  mov one, #0b111111              // Check to see if the next bit will be dummy
+  cmp tmp, one
 
-  cmp count, #0                 // See if there are any samples left.
+  /* Restore values, increase counter */
+  mov one, #1                     // Restore "one"
+  mov usbphy, usbphybkp           // Restore "usbphy"
+  add counter, counter, one
 
-  bne get_usb_bit               // If so, obtain another bit.
+  beq usb_unstuff
+  // 4
 
-phy_overflow:                   // If not, we've overflowed the buffer
-  pop {samples,r4,r5,r6,r7}
-  mov r0, #0
-  sub r0, r0, #2                // Return -2
-  bx lr
+
+#if !defined(USB_PHY_READ_TEST)
+  bl usb_read_wait_6_cycles
+#endif /* defined(USB_PHY_READ_TEST) */
+  b get_usb_bit
+  // 2
+
+usb_unstuff:
+// Just invert the value and ignore the next bit
+#if defined(USB_PHY_READ_TEST)
+  ldr reg, [usbphy, #dnIAddr]
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  str reg, [usbphy, #dnIAddr]   // Move read test register up by 4
+  ldr reg, [usbphy, #dpIAddr]
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  add reg, reg, one
+  str reg, [usbphy, #dpIAddr]   // Move read test register up by 4
+#endif /* defined(USB_PHY_READ_TEST) */
+  mov reg, lastval
+  mvn reg, reg
+  and reg, reg, one
+  mov lastval, reg
+  // 18
+#if !defined(USB_PHY_READ_TEST)
+  bl usb_read_wait_12_cycles
+#endif /* defined(USB_PHY_READ_TEST) */
+  b get_usb_bit
 
 exit:
-  mov count, samples
-  pop {samples,r4,r5,r6,r7}
-  sub r0, count, samples        // Report how many bits we received
-  sub r0, r0, #1                // Remove extra trailing SE0
-  bx lr
 
-timeout:
-  pop {samples,r4,r5,r6,r7}
+  mov one, #1
+.rept 8
+  lsr val, val, one              // Shift the state into the carry bit
+  adc sample1, sample1, sample1  // Propagate the carry bit up
+  adc sample2, sample2, sample2  // Propagate the carry bit up
+  adc sample3, sample3, sample3  // Propagate the carry bit up
+.endr
+  pop {outptr, r2}
+
+  rev sample1, sample1
+  rev sample2, sample2
+  rev sample3, sample3
+  str sample1, [r2, #8]
+  str sample2, [r2, #4]
+  str sample3, [r2, #0]
+
+  /* Commit the number of bits read */
+  mov r0, counter
+  mov r3, #3
+  asr r0, r0, r3
+
+  mov r3, r0
+  mov r4, #0
+copy_loop_top:
+  ldrb r5, [r2, r4]
+  sub r3, r3, #1
+
+  strb r5, [r1, r4]
+  add r4, r4, #1
+
+  cmp r4, r0
+  bne copy_loop_top
+final_exit:
+  pop {r4,r5,r6,r7,pc}
+
+usb_phy_read_timeout:
+  pop {outptr, r2}
   mov r0, #0
   sub r0, r0, #1
-  bx lr
+  pop {r4,r5,r6,r7,pc}
 .endfunc
 .type usbPhyRead, %function
 .size usbPhyRead, .-usbPhyRead
+
+usb_read_wait_28_cycles: nop
+usb_read_wait_27_cycles: nop
+usb_read_wait_26_cycles: nop
+usb_read_wait_25_cycles: nop
+usb_read_wait_24_cycles: nop
+usb_read_wait_23_cycles: nop
+usb_read_wait_22_cycles: nop
+usb_read_wait_21_cycles: nop
+usb_read_wait_20_cycles: nop
+usb_read_wait_19_cycles: nop
+usb_read_wait_18_cycles: nop
+usb_read_wait_17_cycles: nop
+usb_read_wait_16_cycles: nop
+usb_read_wait_15_cycles: nop
+usb_read_wait_14_cycles: nop
+usb_read_wait_13_cycles: nop
+usb_read_wait_12_cycles: nop
+usb_read_wait_11_cycles: nop
+usb_read_wait_10_cycles: nop
+usb_read_wait_9_cycles:  nop
+usb_read_wait_8_cycles:  nop
+usb_read_wait_7_cycles:  nop
+usb_read_wait_6_cycles:  nop
+usb_read_wait_5_cycles:  mov pc, lr
+
 .global usbPhyRead_size
 .align 4
 usbPhyRead_size: .long usbPhyRead, .-usbPhyRead
-
-.global usbPhyRead_end
-usbPhyRead_end: nop
 
 
 
@@ -243,6 +416,7 @@ usbPhyRead_end: nop
 .func usbPhyWrite
 .global usbPhyWrite
 /*int */usbPhyWrite/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
+#if 0
   push {r4,r5,r6,r7}
   // First, set both lines to OUTPUT
   ldr reg, [usbphy, #dpDAddr]   // Get the direction address
@@ -330,6 +504,7 @@ usb_phy_commit_values:
   mov count, samples
   pop {r4,r5,r6,r7}
   sub r0, count, samples        // Report how many bits we received
+#endif
   bx lr
 .endfunc
 .type usbPhyWrite, %function
@@ -337,116 +512,5 @@ usb_phy_commit_values:
 .global usbPhyWrite_size
 .align 4
 usbPhyWrite_size: .long usbPhyWrite, .-usbPhyWrite
-.global usbPhyWrite_end
-usbPhyWrite_end: nop
-
-/*
-.align  2
-.thumb_func
-.global NMI_Handler
-NMI_Handler:
-  ldr r0, SIM_SCGC5
-  ldr r0, [r0]
-  ldr r1, SIM_SCGC5_default
-  cmp r0, r1
-
-  beq do_reset
-
-  ldr r2, NMI_Func
-  mov pc, r2
-
-do_reset:
-  ldr r2, Reset_Func
-  mov pc, r2
-.type NMI_Handler, %function
-.size NMI_Handler, .-NMI_Handler
-
-.balign 4
-Reset_Func:
-.word Reset_Handler
-NMI_Func:
-.word usbPhyISR
-
-.balign 4
-SIM_SCGC5:
-.word 0x40048038
-SIM_SCGC5_default:
-.word 0x00000182
-*/
-
-.balign 4
-SysTick_BASE:
-.word 0xE000E000
-
 .end
 
-#else
-
-
-.func usbPhyWrite
-.global usbPhyWrite
-/*int */usbPhyWrite/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
-  bx lr
-.type usbPhyWrite, %function
-.size usbPhyWrite, .-usbPhyWrite
-.endfunc
-
-.func usbPhyRead
-.global usbPhyRead
-/*int */usbPhyRead/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
-  bx lr
-.type usbPhyRead, %function
-.size usbPhyRead, .-usbPhyRead
-.endfunc
-
-.func usbPhyTime
-.global usbPhyTime
-/*int */usbPhyTime/*(volatile uint32_t *reg, uint32_t val)*/:
-.rept 32
-  str r1, [r0]
-  str r1, [r0]
-  bl wait_14_cycles
-.endr
-in_loop:
-b in_loop
-  str r1, [r0]
-  str r1, [r0]
-  nop
-  nop
-
-  nop
-  nop
-  nop
-  nop
-
-  nop
-  nop
-  nop
-  nop
-
-  nop
-  nop
-  b usbPhyTime /* 2 cycles */
-
-/* This has been validated when running from RAM */
-.type usbPhyTime, %function
-.size usbPhyTime, .-usbPhyTime
-.endfunc
-wait_16_cycles: nop
-wait_15_cycles: nop
-wait_14_cycles: nop
-wait_13_cycles: nop
-wait_12_cycles: nop
-wait_11_cycles: nop
-wait_10_cycles: nop
-wait_9_cycles:  nop
-wait_8_cycles:  nop /* mov pc, lr */ /* When running out of Flash (sometimes) */
-wait_7_cycles:  nop
-wait_6_cycles:  nop
-wait_5_cycles:  mov pc, lr
-.global usbPhyTime_end
-usbPhyTime_end: nop
-.global usbPhyTime_size
-.align 4
-usbPhyTime_size: .long usbPhyTime, .-usbPhyTime
-#endif

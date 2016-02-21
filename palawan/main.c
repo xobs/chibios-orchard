@@ -135,7 +135,7 @@ int main(void)
   chSysInit();
 
 
-#if 1
+#if 0
   *((volatile uint32_t *)0xf8000114) |= 0x3;
   chSysLock();
 //  memfunc_load(usbPhyTime, ramtime);

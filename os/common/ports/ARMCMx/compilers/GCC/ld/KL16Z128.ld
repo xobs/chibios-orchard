@@ -184,5 +184,19 @@ SECTIONS
   } > flash
 }
 
+/* RAM region to be used for Main stack. This stack accommodates the processing
+      of all exceptions and interrupts*/
+REGION_ALIAS("MAIN_STACK_RAM", ram);
+
+/* RAM region to be used for the process stack. This is the stack used by
+      the main() function.*/
+REGION_ALIAS("PROCESS_STACK_RAM", ram);
+
+/* RAM region to be used for data segment.*/
+REGION_ALIAS("DATA_RAM", ram);
+
+/* RAM region to be used for BSS segment.*/
+REGION_ALIAS("BSS_RAM", ram);
+
 __heap_base__   = _end;
 __heap_end__    = __ram_end__;

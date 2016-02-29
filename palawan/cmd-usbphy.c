@@ -27,12 +27,11 @@ struct USBPHY {
 
 enum state {
   state_se0,
-  state_k,
   state_j,
+  state_k,
   state_se1,
 };
 
-//#define USB_PHY_LL_DEBUG
 static struct USBPHY usbPhy = {
   /* PTB0 */
   .usbdpIAddr = &FGPIOB->PDIR,

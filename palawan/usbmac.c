@@ -124,11 +124,6 @@ int usbMacInsert(uint8_t *temp_packet, int packet_size) {
     memcpy(usb_packets[usb_packet_write_head].data,
            temp_packet + 1,
            packet_size - 3);
-
-    /* XXX HACK */
-    uint8_t ack_byte = 0x4b;
-    //usbPhyQueue(&ack_byte, 1);
-    usbPhyWriteDirect(&ack_byte, 1);
     break;
 
   /* Token packets, with CRC-5 */

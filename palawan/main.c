@@ -119,7 +119,6 @@ int loop_counter = 0;
 int last_ret;
 
 extern void usbPhyTime(int, int);
-#include "memfunc.h"
 int main(void)
 {
   evtTableInit(palawan_events, 32);
@@ -134,106 +133,12 @@ int main(void)
   halInit();
   chSysInit();
 
-
 #if 0
-  *((volatile uint32_t *)0xf8000114) |= 0x3;
-  chSysLock();
-//  memfunc_load(usbPhyTime, ramtime);
-//  memfunc_call(ramtime, 0xf800010c, 3);
-
-  usbPhyTime(0xf800010c, 3);
-#endif
-#if 0
-  /* Generate a 1.5 MHz tone, to simulate USB */
-  *((volatile uint32_t *)0xf8000114) |= 0x3;
-  *((volatile uint32_t *)0xf8000104) |= 0x1;
-  *((volatile uint32_t *)0xf8000108) |= 0x2;
-  chSysLock();
   while (1) {
-    *((volatile uint32_t *)0xf800010c) = 0x3;
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-
-
-    *((volatile uint32_t *)0xf800010c) = 0x1;
-    asm("nop");
-
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-  }
-#endif
-#if 0
-  /* Generate a 1.5 MHz state transition, to test USB transmission */
-  enum state {
-    state_se0,
-    state_k,
-    state_j,
-    state_se1,
-  };
-
-  uint8_t tmp_buffer[1024];
-  unsigned int i;
-  for (i = 0; i < sizeof(tmp_buffer); i += 2) {
-    tmp_buffer[i + 0] = state_k;
-    tmp_buffer[i + 1] = state_j;
-  }
-  extern int usbPhyWriteDirect(const uint8_t *buffer, int size);
-
-  while (1) {
-    last_ret = usbPhyWriteDirect(tmp_buffer, sizeof(tmp_buffer));
-    loop_counter++;
+    chSysLock();
+    usbPhyWriteTest();
+    chSysUnlock();
+    chThdSleepSeconds(2);
   }
 #endif
 

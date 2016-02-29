@@ -52,20 +52,30 @@ void cmd_usbmac(BaseSequentialStream *chp, int argc, char *argv[])
   usbMacGetStatistics(&mac_stats);
 
   count = 0;
+  chprintf(chp, "USB MAC Events:\r\n");
   while ((packet = usbMacGetPacket()) != NULL) {
     count++;
     chprintf(chp, "Packet %d:\r\n", count);
     chprintf(chp, "    %02x %s\r\n", packet->pid, pid_to_str(packet->pid));
     chprintf(chp, "    %d bytes of data\r\n", packet->size);
     if (packet->size) {
-      chprintf(chp, "   ");
+      chprintf(chp, "    -->");
       for (i = 0; i < packet->size; i++)
         chprintf(chp, " %02x", packet->data[i]);
       chprintf(chp, "\r\n");
     }
   }
 
-  chprintf(chp, "USB processed %d packets\r\n", count);
+  chprintf(chp, "USB processed %d MAC packets\r\n", count);
+
+  chprintf(chp, "USB PHY Events:\r\n");
+  for (i = 0; i < phy_stats.timestamp_count; i++) {
+    uint32_t event = phy_stats.timestamps[i];
+    chprintf(chp, "      %3d: %c %d\r\n",
+        i,
+        event & 0x00010000 ? 'i' : 'o',
+        event & 0xffff);
+  }
 
   chprintf(chp, "USB MAC statistics:\r\n");
   chprintf(chp, "    MAC packets:          %d\r\n", mac_stats.num_packets);
@@ -81,26 +91,13 @@ void cmd_usbmac(BaseSequentialStream *chp, int argc, char *argv[])
   chprintf(chp, "USB PHY statistics:\r\n");
   chprintf(chp, "    PHY packets:          %d\r\n", phy_stats.num_packets);
   chprintf(chp, "    PHY errors:           %d\r\n", phy_stats.errors);
-  chprintf(chp, "    PHY underflow:        %d\r\n", phy_stats.underflow);
   chprintf(chp, "    PHY overflow:         %d\r\n", phy_stats.overflow);
   chprintf(chp, "    PHY timeout:          %d\r\n", phy_stats.timeout);
   chprintf(chp, "    PHY no end-of-sync:   %d\r\n", phy_stats.no_end_of_sync);
   chprintf(chp, "    PHY no end-of-frame:  %d\r\n", phy_stats.no_end_of_frame);
-  chprintf(chp, "    Incoming read head:   %d\r\n", phy_stats.in_read_head);
-  chprintf(chp, "    Incoming write head:  %d\r\n", phy_stats.in_write_head);
-  chprintf(chp, "    Incoming buffer size: %d\r\n", phy_stats.in_buffer_size);
   chprintf(chp, "    Outgoing read head:   %d\r\n", phy_stats.out_read_head);
   chprintf(chp, "    Outgoing write head:  %d\r\n", phy_stats.out_write_head);
   chprintf(chp, "    Outgoing buffer size: %d\r\n", phy_stats.out_buffer_size);
-
-  chprintf(chp, "USB PHY Events:\r\n");
-  for (i = 0; i < phy_stats.timestamp_count; i++) {
-    uint32_t event = phy_stats.timestamps[i];
-    chprintf(chp, "      %3d: %c %d\r\n",
-        i,
-        event & 0x00010000 ? 'i' : 'o',
-        event & 0xffff);
-  }
 
   usbPhyResetStatistics();
   usbMacResetStatistics();

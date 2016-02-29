@@ -21,33 +21,22 @@
 #include "palawan-shell.h"
 #include "usbphy.h"
 
-extern void usbStateTransitionI(void);
-extern void cmd_usbla(BaseSequentialStream *chp, int argc, char *argv[]);
+extern void cmd_usbmac(BaseSequentialStream *chp, int argc, char *argv[]);
 
 void cmd_usbcap(BaseSequentialStream *chp, int argc, char *argv[])
 {
-	chprintf(chp, "Sampling USB pins... ");
-	chSysLock();
-	usbStateTransitionI();
-	chSysUnlock();
-	chprintf(chp, "Done.\r\n");
+  uint8_t samples[11];
 
-	cmd_usbla(chp, argc, argv);
+  chprintf(chp, "Waiting for sample...");
+  chSysLock();
+  while (!(FGPIOD->PDIR & (1 << 5))) {
+    ;
+  }
+  usbCapture(samples);
+  chSysUnlock();
+  chprintf(chp, " Done.\r\n");
+
+  cmd_usbmac(chp, argc, argv);
 }
 
 palawan_command("usbcap", cmd_usbcap);
-
-
-void cmd_usbproc(BaseSequentialStream *chp, int argc, char *argv[])
-{
-  int ret;
-
-  (void)argc;
-  (void)argv;
-
-	chprintf(chp, "Processing USB... ");
-  ret = usbProcessIncoming();
-	chprintf(chp, "%d packets processed.\r\n", ret);
-}
-
-palawan_command("usbproc", cmd_usbproc);

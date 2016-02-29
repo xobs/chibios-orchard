@@ -19,12 +19,12 @@ static int stats_crc16_errors;
 static int stats_illegal_pids;
 static int stats_num_packets;
 
-static const unsigned char crc5Table4[] =
+static const uint32_t crc5Table4[] =
 {
   0x00, 0x0E, 0x1C, 0x12, 0x11, 0x1F, 0x0D, 0x03,
   0x0B, 0x05, 0x17, 0x19, 0x1A, 0x14, 0x06, 0x08
 };
-static const unsigned char crc5Table0[] =
+static const uint32_t crc5Table0[] =
 {
   0x00, 0x16, 0x05, 0x13, 0x0A, 0x1C, 0x0F, 0x19,
   0x14, 0x02, 0x11, 0x07, 0x1E, 0x08, 0x1B, 0x0D
@@ -32,8 +32,8 @@ static const unsigned char crc5Table0[] =
 
 //---------------
 static int crc5Check(const unsigned char * data) {
-  unsigned char b = data[0] ^ 0x1F;
-  unsigned char crc = crc5Table4[b & 0x0F] ^ crc5Table0[(b >> 4) & 0x0F];
+  unsigned int b = data[0] ^ 0x1F;
+  unsigned int crc = crc5Table4[b & 0x0F] ^ crc5Table0[(b >> 4) & 0x0F];
   b = data[1] ^ crc;
   return (crc5Table4[b & 0x0F] ^ crc5Table0[(b>>4) & 0x0F]) == 0x06;
 }

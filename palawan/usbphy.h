@@ -30,5 +30,6 @@ void usbPhyWriteTest(void);
 int usbProcessIncoming(void);
 int usbPhyQueue(const uint8_t *buffer, int buffer_size);
 int usbCapture(uint8_t samples[11]);
+int usbCaptureTest(uint8_t samples[11]);
 
 #endif /* __USB_PHY_H__ */

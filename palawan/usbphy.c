@@ -54,7 +54,7 @@ struct USBPHY {
   uint32_t usbdnMask;
   uint32_t usbdnShift;
 
-  uint32_t ticks;
+  uint32_t sp_save;
 } __attribute__((packed));
 
 enum state {
@@ -65,8 +65,7 @@ enum state {
 };
 
 //#define USB_PHY_LL_DEBUG
-static volatile struct USBPHY usbPhy = {
-#if !defined(USB_PHY_LL_DEBUG)
+static struct USBPHY usbPhyPins = {
   /* PTB0 */
   .usbdpIAddr = &FGPIOB->PDIR,
   .usbdpSAddr = &FGPIOB->PSOR,
@@ -82,8 +81,9 @@ static volatile struct USBPHY usbPhy = {
   .usbdnDAddr = &FGPIOA->PDDR,
   .usbdnMask  = (1 << 4),
   .usbdnShift = 4,
-#else
-#warning "Enabling debug pins"
+};
+
+static struct USBPHY usbPhyTestPins = {
   /* Pins J21 and J19 */
   /* PTD5 */
   .usbdpIAddr = &FGPIOD->PDIR,
@@ -100,12 +100,9 @@ static volatile struct USBPHY usbPhy = {
   .usbdnDAddr = &FGPIOD->PDDR,
   .usbdnMask  = (1 << 6),
   .usbdnShift = 6,
-#endif
-
-  .ticks = 48000000 / USB_LS_RATE,
 };
 
-static const struct USBPHY usbPhyTestPattern = {
+static const struct USBPHY usbPhyTestPatternPins = {
   /* PTE0 */
   .usbdpIAddr = &FGPIOE->PDIR,
   .usbdpSAddr = &FGPIOE->PSOR,
@@ -227,16 +224,47 @@ int usbPhyQueue(const uint8_t *buffer, int buffer_size) {
   return 0;
 }
 
+int usbCaptureTest(uint8_t samples[11]) {
+  int bytes_read;
+  static uint32_t scratch[3] = {};
+
+  /* Toggle the green LED */
+  *((volatile uint32_t *)0xf80000cc) = 0x80;
+
+  bytes_read = usbPhyRead(&usbPhyTestPins, samples, scratch);
+
+  if (bytes_read < 0) {
+    if (bytes_read == -1)
+      stats_timeout++;
+    else if (bytes_read == -2)
+      stats_overflow++;
+    else if (bytes_read == -3)
+      stats_no_end_of_sync++;
+    else
+      stats_errors++;
+    goto err;
+  }
+  stats_num_packets++;
+
+  //stats_timestamps[stats_timestamps_offset++] = 0x00010000 | SysTick->VAL;
+  //stats_timestamps_offset &= stats_timestamps_offset_mask;
+  //usbMacInsert(scratch, 12);
+  usbMacInsert(samples, bytes_read);
+
+  return bytes_read;
+
+err:
+  return -1;
+}
+
 int usbCapture(uint8_t samples[11]) {
   int bytes_read;
   static uint32_t scratch[3] = {};
 
-#if 1
   /* Toggle the green LED */
   *((volatile uint32_t *)0xf80000cc) = 0x80;
-#endif
 
-  bytes_read = usbPhyRead(&usbPhy, samples, scratch);
+  bytes_read = usbPhyRead(&usbPhyPins, samples, scratch);
 
   if (bytes_read < 0) {
     if (bytes_read == -1)
@@ -299,11 +327,16 @@ int usbPhyWriteDirect(const uint8_t *buffer, int size) {
   stats_timestamps[stats_timestamps_offset++] = 0x00020000 | SysTick->VAL;
   stats_timestamps_offset &= stats_timestamps_offset_mask;
 
-  return usbPhyWrite(&usbPhy, out_buffer, bit_length);
+  return usbPhyWrite(&usbPhyPins, out_buffer, bit_length);
 }
 
 void usbPhyWriteTest(void) {
-  usbPhyWriteTestPattern(&usbPhyTestPattern);
+  // 0xC3, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, 0xDD, 0x94
+  uint32_t buffer[3] = {0xC3800600,
+                        0x01000040,
+                        0x00DD94};
+  usbPhyWrite(&usbPhyTestPatternPins, buffer, 11);
+  //usbPhyWriteTestPattern(&usbPhyTestPatternPins);
 }
 
 static THD_WORKING_AREA(waUsbBusyPollThread, 256);

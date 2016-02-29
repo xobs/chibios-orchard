@@ -235,7 +235,7 @@ static void cmd_usbphy(BaseSequentialStream *chp, int argc, char *argv[])
   {
     int i;
     int count = packet_bits;
-    static const char *states = "0KJ1";
+    static const char *states = "0JK1";
     chprintf(chp, "    States: ");
     for (i = 0; i < count; i++)
       chprintf(chp, "%c", states[pair_buffer[i]]);

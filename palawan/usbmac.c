@@ -59,6 +59,7 @@ static uint16_t crc16(const unsigned char *addr, int num, int crc, int poly) {
 }
 
 static int validate_token(const uint8_t *data, int size) {
+  return 0;
   if (size != 2)
     return -1;
   return crc5Check(data);
@@ -67,6 +68,10 @@ static int validate_token(const uint8_t *data, int size) {
 static int validate_data(const uint8_t *data, int size) {
   uint16_t result;
   uint16_t compare;
+
+  if (size < 2)
+    return -1;
+  return 0;
 
   result = crc16(data, size - 2, 0xffff, 0x8005);
   compare = ((data[size - 2] << 8) & 0xff00) | ((data[size - 1] << 0) & 0x00ff);
@@ -115,7 +120,7 @@ int usbMacInsert(uint8_t *temp_packet, int packet_size) {
   case 0xc3: /* DATA0 */
     if (validate_data(temp_packet + 1, packet_size - 1)) {
       stats_crc16_errors++;
-#warning "CRC-16 failed, copying packet anyway"
+      return -2;
     }
     usb_packets[usb_packet_write_head].pid = temp_packet[0];
 

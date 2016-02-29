@@ -1,4 +1,4 @@
-.section .text    /* Can also run out of .section .ramtext */
+.section .ramtext    /* Can also run out of .section .ramtext */
 
 usbphy  .req sp   /* Pointer to the USBPHY struct, described above */
 outptr  .req r1   /* Outgoing sample buffer (pushed to stack) */
@@ -13,8 +13,8 @@ sample2 .req r6   /* Next 32-bits */
 sample3 .req r7   /* Remaining 24-bits */
 
 lastval .req r8   /* What value was the last pin? */
-counter .req r10
-unstuff .req r11
+counter .req r9
+unstuff .req r10
 
 #if 0
   /***************************************************************************
@@ -22,7 +22,7 @@ unstuff .req r11
    * 
    * Exports the following functions:
    *
-   *    int usbPhyRead(USBPhy *phy, uint8_t buffer[11])
+   *    int usbPhyRead(USBPhy *phy, uint8_t buffer[11], uint32_t scratch[3])
    *    void usbPhyWrite(USBPhy *phy, uint8_t buffer[11], uint32_t count)
    *
    * Interrupts are disabled during this code, since it is time-critical.
@@ -48,8 +48,8 @@ unstuff .req r11
    *    uint32_t dnMask;
    *    uint32_t dnShift;
    *
-   *    /* Unused, but the number of CPU ticks/cycles for one USB bit */
-   *    uint32_t ticks;
+   *    /* Store the stack pointer here during running */
+   *    uint32_t sp_temp;
    * };
    */
 #endif
@@ -459,10 +459,6 @@ usb_read_wait_5_cycles:  mov pc, lr
 .type usbPhyRead, %function
 .size usbPhyRead, .-usbPhyRead
 
-.global usbPhyRead_size
-.align 4
-usbPhyRead_size: .long usbPhyRead, .-usbPhyRead
-
 
 
 /*
@@ -477,26 +473,59 @@ usbPhyRead_size: .long usbPhyRead, .-usbPhyRead
  */
 .func usbPhyWrite
 .global usbPhyWrite
-/*int */usbPhyWrite/*(const USBPHY *phy, uint8_t *samples, int max_samples)*/:
-#if 0
-  push {r4,r5,r6,r7}
+/*int */usbPhyWrite/*(const USBPHY *phy, uint8_t *samples, int count)*/:
+  push {r4,r5,r6,r7,lr}
+
+  /* TODO: Convert from uint8_t *samples to register values */
+  ldr r4, [r1, #0]
+  mov r8, r4
+  ldr r4, [r1, #4]
+  mov r9, r4
+  ldr r4, [r1, #8]
+  mov r10, r4
+
+  // Overwrite r1 with the number of samples we're writing, since the
+  // samples buffer is now copied to r8, r9, and r10
+  mov r1, r2
+
   // First, set both lines to OUTPUT
   ldr reg, [usbphy, #dpDAddr]   // Get the direction address
-  ldr val1, [reg]               // Get the direction value
-  ldr val2, [usbphy, #dpMask]   // Get the mask value for ORing in
-  orr val1, val1, val2          // Set the direciton mask
+  ldr val, [reg]               // Get the direction value
+  ldr mash, [usbphy, #dpMask]   // Get the mask value for ORing in
+  orr val, val, mash          // Set the direciton mask
   ldr reg, [usbphy, #dpDAddr]   // Get the direction address
-  str val1, [reg]               // Set the direction for Dp
+  str val, [reg]               // Set the direction for Dp
 
   ldr reg, [usbphy, #dnDAddr]   // Get the direction address
-  ldr val1, [reg]               // Get the direction value
-  ldr val2, [usbphy, #dnMask]   // Get the mask value for ORing in
-  orr val1, val1, val2          // Set the direciton mask
+  ldr val, [reg]               // Get the direction value
+  ldr mash, [usbphy, #dnMask]   // Get the mask value for ORing in
+  orr val, val, mash          // Set the direciton mask
   ldr reg, [usbphy, #dnDAddr]   // Get the direction address
-  str val1, [reg]               // Set the direction for Dp
+  str val, [reg]               // Set the direction for Dp
 
   ldr r5, [usbphy, #dpMask]
   ldr r6, [usbphy, #dnMask]
+
+
+  ldr r2, [r0, #dpSAddr]
+  ldr r3, [r0, #dpCAddr]
+  ldr r4, [r0, #dpMask]
+
+  ldr r5, [r0, #dnSAddr]
+  ldr r6, [r0, #dnCAddr]
+  ldr r7, [r0, #dnMask]
+
+  // usb start-of-frame header //
+  bl usb_write_state_k
+  bl usb_write_state_j
+  bl usb_write_state_k
+  bl usb_write_state_j
+  bl usb_write_state_k
+  bl usb_write_state_j
+  bl usb_write_state_k
+  bl usb_write_state_k
+  // end of header //
+
 
 usb_phy_write_top:
 
@@ -504,10 +533,7 @@ usb_phy_write_top:
   nop                         // Padding to get to 1.5 MHz
 .endr
 
-  ldrb r7, [samples]          // Get the next sample to send
-
-  mov r3, #3                  // Mask the sample so that it's in the
-  and r7, r7, r3              // range of (0..3) so we don't jump out.
+  add r8, r8, r8              // Shift the next bit into the carry bit.
 
    // Each branch has an equal number of cycles and is an equal size.
    // Multiply the USB state (which is 0, 1, 2, or 3) by the size of
@@ -542,32 +568,27 @@ usb_phy_commit_values:
   str r5, [r3]                  // Write the computed states to the USB
   str r6, [r4]                  // pins, setting them or clearing as needed.
 
-  add samples, samples, #1      // Move on to the next sample.
-  sub count, count, #1          // Subtract 1 from the total sample number.
-  cmp count, #0                 // See if there are any samples left to send.
   bne usb_phy_write_top         // If so, send another bit.
+
+  // --- Done Transmitting --- //
 
   // Now, set both lines to INPUT
   ldr reg, [usbphy, #dpDAddr]   // Get the direction address
-  ldr val1, [reg]               // Get the direction value
-  ldr val2, [usbphy, #dpMask]   // Get the mask value for ORing in
-  bic val1, val1, val2          // Clear the direciton mask
+  ldr val, [reg]               // Get the direction value
+  ldr mash, [usbphy, #dpMask]   // Get the mask value for ORing in
+  bic val, val, mash          // Clear the direciton mask
   ldr reg, [usbphy, #dpDAddr]   // Get the direction address
-  str val1, [reg]               // Set the direction for Dp
+  str val, [reg]               // Set the direction for Dp
 
   ldr reg, [usbphy, #dnDAddr]   // Get the direction address
-  ldr val1, [reg]               // Get the direction value
-  ldr val2, [usbphy, #dnMask]   // Get the mask value for ORing in
-  bic val1, val1, val2          // Clear the direciton mask
+  ldr val, [reg]               // Get the direction value
+  ldr mash, [usbphy, #dnMask]   // Get the mask value for ORing in
+  bic val, val, mash          // Clear the direciton mask
   ldr reg, [usbphy, #dnDAddr]   // Get the direction address
-  str val1, [reg]               // Set the direction for Dp
+  str val, [reg]               // Set the direction for Dp
 
   // Return the value
-  mov count, samples
-  pop {r4,r5,r6,r7}
-  sub r0, count, samples        // Report how many bits we received
-#endif
-  bx lr
+  pop {r4,r5,r6,r7,pc}
 .endfunc
 .type usbPhyWrite, %function
 .size usbPhyWrite, .-usbPhyWrite
@@ -593,13 +614,13 @@ usbPhyWriteTestPattern:
   ldr reg, [usbphy, #dnDAddr]     // Get the direction address
   str val, [reg]                  // Set the direction for Dp
 
-  ldr r1, [r0, #dpSAddr]
-  ldr r2, [r0, #dpCAddr]
-  ldr r3, [r0, #dpMask]
+  ldr r2, [r0, #dpSAddr]
+  ldr r3, [r0, #dpCAddr]
+  ldr r4, [r0, #dpMask]
 
-  ldr r4, [r0, #dnSAddr]
-  ldr r5, [r0, #dnCAddr]
-  ldr r6, [r0, #dnMask]
+  ldr r5, [r0, #dnSAddr]
+  ldr r6, [r0, #dnCAddr]
+  ldr r7, [r0, #dnMask]
 
   // usb start-of-frame header //
   bl usb_write_state_k
@@ -612,14 +633,16 @@ usbPhyWriteTestPattern:
   bl usb_write_state_k
   // end of header //
 
-  // 0x00
-  // 0x00
-  // 0x00
-  // 0x00
-  // 0xd5
-  // 0x6d
-  // 0xdd
-  // 0x80
+  bl usb_write_state_k // 1
+  bl usb_write_state_k // 1
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_k // 1
+  bl usb_write_state_k // 1
+
+  bl usb_write_state_k // 1
   bl usb_write_state_j // 0
   bl usb_write_state_k // 0
   bl usb_write_state_j // 0
@@ -627,7 +650,33 @@ usbPhyWriteTestPattern:
   bl usb_write_state_j // 0
   bl usb_write_state_k // 0
   bl usb_write_state_j // 0
+
   bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_k // 1
+  bl usb_write_state_k // 1
+  bl usb_write_state_j // 0
+
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_k // 1
 
   bl usb_write_state_j // 0
   bl usb_write_state_k // 0
@@ -648,49 +697,40 @@ usbPhyWriteTestPattern:
   bl usb_write_state_k // 0
 
   bl usb_write_state_j // 0
-  bl usb_write_state_k // 0
-  bl usb_write_state_j // 0
-  bl usb_write_state_k // 0
-  bl usb_write_state_j // 0
-  bl usb_write_state_k // 0
-  bl usb_write_state_j // 0
-  bl usb_write_state_k // 0
-
-  bl usb_write_state_k // 1
-  bl usb_write_state_k // 1
-  bl usb_write_state_j // 0
   bl usb_write_state_j // 1
   bl usb_write_state_k // 0
-  bl usb_write_state_k // 1
   bl usb_write_state_j // 0
-  bl usb_write_state_j // 1
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
 
   bl usb_write_state_k // 0
-  bl usb_write_state_k // 1
-  bl usb_write_state_k // 1
   bl usb_write_state_j // 0
-  bl usb_write_state_j // 1
-  bl usb_write_state_j // 1
   bl usb_write_state_k // 0
-  bl usb_write_state_k // 1
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
 
-  bl usb_write_state_k // 1
-  bl usb_write_state_k // 1
-  bl usb_write_state_j // 0
-  bl usb_write_state_j // 1
   bl usb_write_state_j // 1
   bl usb_write_state_j // 1
   bl usb_write_state_k // 0
   bl usb_write_state_k // 1
+  bl usb_write_state_k // 1
+  bl usb_write_state_k // 1
+  bl usb_write_state_j // 0
+  bl usb_write_state_j // 1
 
+  bl usb_write_state_j // 1
+  bl usb_write_state_k // 0
+  bl usb_write_state_j // 0
+  bl usb_write_state_j // 1
+  bl usb_write_state_k // 0
   bl usb_write_state_k // 1
   bl usb_write_state_j // 0
   bl usb_write_state_k // 0
-  bl usb_write_state_j // 0
-  bl usb_write_state_k // 0
-  bl usb_write_state_j // 0
-  bl usb_write_state_k // 0
-  bl usb_write_state_j // 0
 
   // start of end-of-frame
   bl usb_write_state_se0
@@ -706,19 +746,22 @@ usbPhyWriteTestPattern:
      of usb_read_wait_26_cycles to compensate.
    */
 usb_write_state_j:
-  str r3, [r1]    // D+ set
-  str r6, [r5]    // D- clr
-  b usb_read_wait_27_cycles
+  str r4, [r2]    // D+ set
+  str r7, [r6]    // D- clr
+  b usb_test_wait
 
 usb_write_state_k:
-  str r3, [r2]    // D+ clr
-  str r6, [r4]    // D- set
-  b usb_read_wait_27_cycles
+  str r4, [r3]    // D+ clr
+  str r7, [r5]    // D- set
+  b usb_test_wait
 
 usb_write_state_se0:
-  str r3, [r2]    // D+ clr
-  str r6, [r5]    // D- clr
-  b usb_read_wait_27_cycles
+  str r4, [r3]    // D+ clr
+  str r7, [r6]    // D- clr
+  b usb_test_wait
+
+usb_test_wait:
+  b usb_read_wait_26_cycles
 
 .endfunc
 .type usbPhyWriteTestPattern, %function

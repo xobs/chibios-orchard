@@ -32,7 +32,7 @@ void cmd_usbcap(BaseSequentialStream *chp, int argc, char *argv[])
   while (!(FGPIOD->PDIR & (1 << 5))) {
     ;
   }
-  usbCapture(samples);
+  usbCaptureTest(samples);
   chSysUnlock();
   chprintf(chp, " Done.\r\n");
 

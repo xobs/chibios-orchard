@@ -40,19 +40,22 @@ uint32_t stats_timestamps_offset;
 #define USB_LS_RATE (USB_FS_RATE / 8) /* 1.5 MHz */
 
 struct USBPHY {
+  uint32_t padding[2];
+  uint32_t scratch[6];
   volatile void *usbdpIAddr;
   volatile void *usbdpSAddr;
   volatile void *usbdpCAddr;
   volatile void *usbdpDAddr;
-  uint32_t usbdpMask;
   uint32_t usbdpShift;
 
   volatile void *usbdnIAddr;
   volatile void *usbdnSAddr;
   volatile void *usbdnCAddr;
   volatile void *usbdnDAddr;
-  uint32_t usbdnMask;
   uint32_t usbdnShift;
+
+  uint32_t usbdpMask;
+  uint32_t usbdnMask;
 
   uint32_t sp_save;
 } __attribute__((packed));
@@ -102,7 +105,7 @@ static struct USBPHY usbPhyTestPins = {
   .usbdnShift = 6,
 };
 
-static const struct USBPHY usbPhyTestPatternPins = {
+static struct USBPHY usbPhyTestPatternPins = {
   /* PTE0 */
   .usbdpIAddr = &FGPIOE->PDIR,
   .usbdpSAddr = &FGPIOE->PSOR,
@@ -331,10 +334,13 @@ int usbPhyWriteDirect(const uint8_t *buffer, int size) {
 }
 
 void usbPhyWriteTest(void) {
-  // 0xC3, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, 0xDD, 0x94
-  uint32_t buffer[3] = {0xC3800600,
-                        0x01000040,
-                        0x00DD94};
+  uint8_t buffer[11] = {
+//    0xC3, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, 0xDD, 0x94,
+//    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+//    0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 
+//    0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+  };
   usbPhyWrite(&usbPhyTestPatternPins, buffer, 11);
   //usbPhyWriteTestPattern(&usbPhyTestPatternPins);
 }

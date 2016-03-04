@@ -39,6 +39,16 @@ uint32_t stats_timestamps_offset;
 #define USB_FS_RATE 12000000 /* 12 MHz */
 #define USB_LS_RATE (USB_FS_RATE / 8) /* 1.5 MHz */
 
+const uint8_t bit_reverse_table_256[] = {
+#define R2(n)     n,     n + 2*64,     n + 1*64,     n + 3*64
+#define R4(n) R2(n), R2(n + 2*16), R2(n + 1*16), R2(n + 3*16)
+#define R6(n) R4(n), R4(n + 2*4 ), R4(n + 1*4 ), R4(n + 3*4 )
+  R6(0), R6(2), R6(1), R6(3)
+#undef R2
+#undef R4
+#undef R6
+};
+
 struct USBPHY {
   uint32_t padding[2];
   uint32_t scratch[6];
@@ -56,8 +66,6 @@ struct USBPHY {
 
   uint32_t usbdpMask;
   uint32_t usbdnMask;
-
-  uint32_t sp_save;
 } __attribute__((packed));
 
 enum state {
@@ -229,12 +237,11 @@ int usbPhyQueue(const uint8_t *buffer, int buffer_size) {
 
 int usbCaptureTest(uint8_t samples[11]) {
   int bytes_read;
-  static uint32_t scratch[3] = {};
 
   /* Toggle the green LED */
   *((volatile uint32_t *)0xf80000cc) = 0x80;
 
-  bytes_read = usbPhyRead(&usbPhyTestPins, samples, scratch);
+  bytes_read = usbPhyRead(&usbPhyTestPins, samples);
 
   if (bytes_read < 0) {
     if (bytes_read == -1)
@@ -251,7 +258,6 @@ int usbCaptureTest(uint8_t samples[11]) {
 
   //stats_timestamps[stats_timestamps_offset++] = 0x00010000 | SysTick->VAL;
   //stats_timestamps_offset &= stats_timestamps_offset_mask;
-  //usbMacInsert(scratch, 12);
   usbMacInsert(samples, bytes_read);
 
   return bytes_read;
@@ -262,12 +268,11 @@ err:
 
 int usbCapture(uint8_t samples[11]) {
   int bytes_read;
-  static uint32_t scratch[3] = {};
 
   /* Toggle the green LED */
   *((volatile uint32_t *)0xf80000cc) = 0x80;
 
-  bytes_read = usbPhyRead(&usbPhyPins, samples, scratch);
+  bytes_read = usbPhyRead(&usbPhyPins, samples);
 
   if (bytes_read < 0) {
     if (bytes_read == -1)
@@ -284,7 +289,6 @@ int usbCapture(uint8_t samples[11]) {
 
   //stats_timestamps[stats_timestamps_offset++] = 0x00010000 | SysTick->VAL;
   //stats_timestamps_offset &= stats_timestamps_offset_mask;
-  //usbMacInsert(scratch, 12);
   usbMacInsert(samples, bytes_read);
 
   return bytes_read;
@@ -333,15 +337,20 @@ int usbPhyWriteDirect(const uint8_t *buffer, int size) {
   return usbPhyWrite(&usbPhyPins, out_buffer, bit_length);
 }
 
+static int test_num = 0;
 void usbPhyWriteTest(void) {
   uint8_t buffer[11] = {
 //    0xC3, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, 0xDD, 0x94,
 //    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+//    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 //    0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 
 //    0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+      0xc3, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xaa, 0x55,
   };
-  usbPhyWrite(&usbPhyTestPatternPins, buffer, 11);
+  usbPhyWrite(&usbPhyTestPatternPins, buffer, 11 - test_num);
+  test_num++;
+  if (test_num > 10)
+    test_num = 0;
   //usbPhyWriteTestPattern(&usbPhyTestPatternPins);
 }
 

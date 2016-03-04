@@ -8,6 +8,8 @@
 #include "string.h"
 
 struct USBPHY {
+  uint32_t padding[2];
+  uint32_t scratch[6];
   volatile uint32_t *usbdpIAddr;
   volatile uint32_t *usbdpSAddr;
   volatile uint32_t *usbdpCAddr;
@@ -21,8 +23,6 @@ struct USBPHY {
   volatile uint32_t *usbdnDAddr;
   uint32_t usbdnMask;
   uint32_t usbdnShift;
-
-  uint32_t ticks;
 } __attribute__((packed, aligned(4)));
 
 enum state {
@@ -166,7 +166,6 @@ static void cmd_usbphy(BaseSequentialStream *chp, int argc, char *argv[])
   int packet_bits;
   int ret;
   uint8_t buffer[11];
-  uint32_t scratch[3];
   uint8_t *test_data;
   uint32_t test_size;
 
@@ -257,7 +256,7 @@ static void cmd_usbphy(BaseSequentialStream *chp, int argc, char *argv[])
 
   uint32_t start = (uint32_t)usbPhy.usbdpIAddr;
   memset(buffer, 0, sizeof(buffer));
-  ret = usbPhyRead(&usbPhy, buffer, scratch);
+  ret = usbPhyRead(&usbPhy, buffer);
   uint32_t end = (uint32_t)usbPhy.usbdpIAddr;
 
   chprintf(chp, "usbPhyRead() returned %d, read %d bits\r\n",
@@ -268,7 +267,6 @@ static void cmd_usbphy(BaseSequentialStream *chp, int argc, char *argv[])
 
   chprintf(chp, "Read-back packet (result: %d):\r\n", ret);
   print_hex(chp, buffer, sizeof(buffer));
-  print_hex(chp, scratch, sizeof(scratch));
 }
 
 palawan_command("usbphy", cmd_usbphy);

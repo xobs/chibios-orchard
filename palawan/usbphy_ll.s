@@ -484,6 +484,8 @@ wpaddr    .req r4   /* Write "address" for D+ line, during normal operation */
 wnaddr    .req r5   /* Write "address" for D- line, during normal operation */
 wtmp1     .req r4
 wtmp2     .req r5
+wtmp3     .req r6   /* NOTE: Only use during setup, before wpmask is loaded */
+wtmp4     .req r7   /* NOTE: Only use during setup, before wnmask is loaded */
 
 /* These must remain unchanged during the whole operation. */
 wpmask    .req r6   /* Write mask for D+ line */
@@ -491,9 +493,12 @@ wnmask    .req r7   /* Write mask for D- line */
 
 wstuff    .req r8   /* The last six bits, used for bit stuffing */
 wpktnum   .req r9
+wnextpkt  .req r10
+wdpsetreg .req r11
+wdpclrreg .req r12
+wdnclrreg .req sp
 
 /* Indexes off of the stack pointer */
-.equ wBytesLeft,0x04
 .equ wPkt1,0x08
 .equ wPkt1Num,0x0c
 .equ wPkt2,0x10
@@ -507,140 +512,153 @@ wpktnum   .req r9
 /*int */usbPhyWrite/*(const USBPHY *phy, uint8_t *samples, int count)*/:
   push {r3,r4,r5,r6,r7,lr}
 
-  /* TODO: Convert from uint8_t *samples to register values */
-  cmp r2, #8
-  ble usb_phy_write_less_than_8_bytes
+  cmp r2, #11                       // We can only write 11 bytes max.
+  bgt usb_phy_write_too_many_bytes  // Error out if you write more.
 
-  mov wtmp1, #32
-  str wtmp1, [wusbphy, #wPkt3Num]
+  cmp r2, # 0                       // If there are no bytes, return success.
+  beq usb_phy_write_no_bytes
+
+  cmp r2, #8                        // See if we're writing 8-11 bytes.
+  ble usb_phy_write_less_than_8_bytes // If not, try again.
+
+usb_phy_write_8_to_11_bytes:
+
+  mov wtmp1, #32                    // For words 3 and 2, write the full
+  str wtmp1, [wusbphy, #wPkt3Num]   // 32 bits (4 bytes).
   str wtmp1, [wusbphy, #wPkt2Num]
 
-  mov wtmp1, r2
-  sub wtmp1, #8
-  lsl wtmp1, #3
-  str wtmp1, [wusbphy, #wPkt1Num]
+  mov wtmp1, r2                     // Load number of bytes to write.
+  sub wtmp1, #8                     // Figure out count for last word.
+  lsl wtmp1, #3                     // Convert bytes to bits.
+  str wtmp1, [wusbphy, #wPkt1Num]   // Save this value in pkt1 count.
 
-  mov wtmp1, #3
-  mov wpktnum, wtmp1
+  mov wtmp1, #3                     // Begin at word 3.
+  mov wpktnum, wtmp1                // Store 3 in the packet number index.
+
+  mov wtmp2, #0                     // Begin loading bytes at the top offset.
+  add wtmp2, r2
+
   b usb_phy_write_done_with_byte_check
+
+usb_phy_write_too_many_bytes:
+  mov r1, #1
+  mov r0, #0
+  sub r0, r1
+  pop {r3,r4,r5,r6,r7,pc}
+
+usb_phy_write_no_bytes:
+  mov r0, #0
+  sub r0, r1
+  pop {r3,r4,r5,r6,r7,pc}
 
 usb_phy_write_less_than_8_bytes:
-  cmp r2, #4
-  ble usb_phy_write_less_than_4_bytes
+  cmp r2, #4                        // See if we're writing 4-7 bytes.
+  ble usb_phy_write_less_than_4_bytes // If not, try again.
 
-  mov wtmp1, #0
+  mov wtmp1, #0                     // Packet 3 will write 0 bits.
   str wtmp1, [wusbphy, #wPkt3Num]
 
-  mov wtmp1, #32
+  mov wtmp1, #32                    // The pkt2 index will send all 32 bits.
   str wtmp1, [wusbphy, #wPkt2Num]
 
-  mov wtmp1, r2
-  sub wtmp1, #4
-  lsl wtmp1, #3
-  str wtmp1, [wusbphy, #wPkt1Num]
+  mov wtmp1, r2                     // Load the total number of bytes.
+  sub wtmp1, #4                     // Subtract the first 4 bytes, to get
+  lsl wtmp1, #3                     // the residue.  Multiply by 8 to get
+  str wtmp1, [wusbphy, #wPkt1Num]   // the number of bits, and store in pkt1.
 
-  mov wtmp1, #2
+  mov wtmp1, #2                     // Start processing at packet #2.
   mov wpktnum, wtmp1
+
+  mov wtmp2, #4                     // Begin loading bytes into word 2.
+  add wtmp2, r2
+
   b usb_phy_write_done_with_byte_check
 
-usb_phy_write_less_than_4_bytes:
+usb_phy_write_less_than_4_bytes:    // We're writing 0-3 bytes.
 
-  mov wtmp1, #0
+  mov wtmp1, #0                     // Packets 3 and 2 will process 0 bits.
   str wtmp1, [wusbphy, #wPkt3Num]
   str wtmp1, [wusbphy, #wPkt2Num]
 
-  mov wtmp1, r2
-  lsl wtmp1, #3
-  str wtmp1, [wusbphy, #wPkt1Num]
+  mov wtmp1, r2                     // Load the number of bytes to process,
+  lsl wtmp1, #3                     // convert bits to bytes, and
+  str wtmp1, [wusbphy, #wPkt1Num]   // save it in the packet 1 number.
 
-  mov wtmp1, #1
+  mov wtmp1, #1                     // Start processing at packet #1.
   mov wpktnum, wtmp1
+
+  mov wtmp2, #8                     // Begin loading bytes into word 3.
+  add wtmp2, r2
   
 usb_phy_write_done_with_byte_check:
+  // We need to reverse the incoming buffer.  Load it backwards onto the
+  // stack, then reverse the bits, and load them into the scratch space
+  // stored in usbphy.
+  mov wtmp4, sp                     // Allocate 12 bytes on the stack.
+  sub wtmp4, #12                    // Store it in an indexable register.
+  mov wtmp1, r2                     // Load in how many bytes to process.
+  sub wtmp1, #1                     // Arrays are 0-indexed, so subtract 1
+  sub wtmp2, #1                     // from the register offset.
+copy_bytes_top:
+  ldrb wtmp3, [r1, wtmp1]           // Load one byte from the input array.
+  strb wtmp3, [wtmp4, wtmp2]        // Put the byte into the stack temp.
+  cmp wtmp1, #0                     // If we did input[0], finish.
+  beq copy_bytes_end                // 
+  sub wtmp2, #1                     // Increment the output pointer.
+  sub wtmp1, #1                     // Decrement the input pointer.
+  b copy_bytes_top
+copy_bytes_end:
+// 0xc480c3
+  ldr wtmp1, [wtmp4, #0]            // Load first chunk of data from sp.
+  mvn wtmp1, wtmp1                  // Invert bytes, to make math work.
+  str wtmp1, [wusbphy, #wPkt3]      // Cache value as packet 1.
 
-  // Load the bytes into the pkt caches
-  mov wtmp2, wusbphy
-  add wtmp2, #wPkt1
-  ldrb wtmp1, [r1, #0]
-  strb wtmp1, [wtmp2]
-  add wtmp2, #1
-  ldrb wtmp1, [r1, #1]
-  strb wtmp1, [wtmp2]
-  add wtmp2, #1
-  ldrb wtmp1, [r1, #2]
-  strb wtmp1, [wtmp2]
-  add wtmp2, #1
-  ldrb wtmp1, [r1, #3]
-  strb wtmp1, [wtmp2]
+  ldr wtmp1, [wtmp4, #4]            // Load first chunk of data from sp.
+  mvn wtmp1, wtmp1                  // Invert bytes, to make math work.
+  str wtmp1, [wusbphy, #wPkt2]      // Cache value as packet 2.
 
-  mov wtmp2, wusbphy
-  add wtmp2, #wPkt2
-  ldrb wtmp1, [r1, #4]
-  strb wtmp1, [wtmp2]
-  add wtmp2, #1
-  ldrb wtmp1, [r1, #5]
-  strb wtmp1, [wtmp2]
-  add wtmp2, #1
-  ldrb wtmp1, [r1, #6]
-  strb wtmp1, [wtmp2]
-  add wtmp2, #1
-  ldrb wtmp1, [r1, #7]
-  strb wtmp1, [wtmp2]
-
-  mov wtmp2, wusbphy
-  add wtmp2, #wPkt3
-  ldrb wtmp1, [r1, #8]
-  strb wtmp1, [wtmp2]
-  add wtmp2, #1
-  ldrb wtmp1, [r1, #9]
-  strb wtmp1, [wtmp2]
-  add wtmp2, #1
-  ldrb wtmp1, [r1, #10]
-  strb wtmp1, [wtmp2]
-  add wtmp2, #1
-  ldrb wtmp1, [r1, #11]
-  strb wtmp1, [wtmp2]
-
-  ldr wtmp1, [wusbphy, #wPkt1]
-  mvn wtmp1, wtmp1                // Invert, because it makes math work
-  rev wtmp1, wtmp1
-  str wtmp1, [wusbphy, #wPkt1]
-  ldr wtmp1, [r1, #4]
-  mvn wtmp1, wtmp1                // Invert, because it makes math work
-  rev wtmp1, wtmp1
-  str wtmp1, [wusbphy, #wPkt2]
-  ldr wtmp1, [r1, #8]
-  mvn wtmp1, wtmp1                // Invert, because it makes math work
-  rev wtmp1, wtmp1
-  str wtmp1, [wusbphy, #wPkt3]
+  ldr wtmp1, [wtmp4, #8]            // Load first chunk of data from sp.
+  mvn wtmp1, wtmp1                  // Invert bytes, to make math work.
+  str wtmp1, [wusbphy, #wPkt1]      // Cache value as packet 2.
 
 usb_phy_write_get_first_packet:
   // Read the first packet
-  mov wtmp1, wpktnum
-  lsl wtmp1, #3
-  add wtmp1, wusbphy
-  ldr wpkt, [wtmp1]
-  add wtmp1, #4
-  ldr wleft, [wtmp1]
+  mov wtmp1, wpktnum                // Read the current packet number.
+  lsl wtmp1, #3                     // Multiply the packet number by 3.
+  add wtmp1, wusbphy                // Add it to the start of the usbphy str.
+  ldr wpkt, [wtmp1]                 // Load the value, which is the packet.
+  add wtmp1, #4                     // 4 bytes later, the bits-left comes.
+  ldr wleft, [wtmp1]                // Load the number of bits left.
 
   // First, set both lines to OUTPUT
-  ldr wtmp1, [wusbphy, #dpDAddr]  // Get the direction address
-  ldr wtmp2, [wtmp1]              // Get the direction value
-  ldr wpmask, [wusbphy, #dpMask]  // Get the mask value for ORing in
-  orr wtmp2, wtmp2, wpmask        // Set the direciton mask
-  ldr wtmp1, [wusbphy, #dpDAddr]  // Get the direction address
-  str wtmp2, [wtmp1]              // Set the direction for Dp
+  ldr wtmp1, [wusbphy, #dpDAddr]    // Get the direction address
+  ldr wtmp2, [wtmp1]                // Get the direction value
+  ldr wpmask, [wusbphy, #dpMask]    // Get the mask value for ORing in
+  orr wtmp2, wtmp2, wpmask          // Set the direciton mask
+  ldr wtmp1, [wusbphy, #dpDAddr]    // Get the direction address
+  str wtmp2, [wtmp1]                // Set the direction for D+
 
-  ldr wtmp1, [wusbphy, #dnDAddr]  // Get the direction address
-  ldr wtmp2, [wtmp1]              // Get the direction value
-  ldr wnmask, [wusbphy, #dnMask]  // Get the mask value for ORing in
-  orr wtmp2, wtmp2, wnmask        // Set the direciton mask
-  ldr wtmp1, [wusbphy, #dnDAddr]  // Get the direction address
-  str wtmp2, [wtmp1]              // Set the direction for Dp
+  ldr wtmp1, [wusbphy, #dnDAddr]    // Get the direction address
+  ldr wtmp2, [wtmp1]                // Get the direction value
+  ldr wnmask, [wusbphy, #dnMask]    // Get the mask value for ORing in
+  orr wtmp2, wtmp2, wnmask          // Set the direciton mask
+  ldr wtmp1, [wusbphy, #dnDAddr]    // Get the direction address
+  str wtmp2, [wtmp1]                // Set the direction for D-
 
-  mov wlastsym, #1                // Last symbols were "KK" from the header
-  mov wtmp1, #0b111100            // So load a run of 2 into the stuff value.
-  mov wstuff, wtmp1               //
+  mov wlastsym, #1                  // Last symbols were "KK" from the header,
+  mov wtmp1, #0b111100              // so load a run of 2 into the
+  mov wstuff, wtmp1                 // stuff value.
+
+  // Save sp, since we reuse it for D- clr address.
+  mov wtmp1, sp
+  str wtmp1, [wusbphy, #spSave]
+
+  ldr wtmp1, [wusbphy, #dpSAddr]    // Registers are faster than RAM, and we
+  mov wdpsetreg, wtmp1              // only have two free registers, so pre-
+  ldr wtmp1, [wusbphy, #dpCAddr]    // cache the D+ addresses to save one
+  mov wdpclrreg, wtmp1              // clock cycle.
+  ldr wtmp1, [wusbphy, #dnCAddr]    // Cache D- clr as well.
+  mov wdnclrreg, wtmp1
 
   // usb start-of-frame header //
   bl usb_write_state_k
@@ -650,13 +668,15 @@ usb_phy_write_get_first_packet:
   bl usb_write_state_k
   bl usb_write_state_j
   bl usb_write_state_k
-  bl usb_write_state_k
+  bl usb_read_wait_26_cycles        // Hold k state for one more cycle.  Take
+                                    // up the slack that would normally
+                                    // follow this.
   // end of header //
 
 usb_phy_write_top:
 
   mov wtmp1, #0                     // Clear wthisbit, so we can add later.
-  add wpkt, wpkt, wpkt              // Shift the top bit into the carry bit.
+  lsr wpkt, #1                      // Shift the bottom bit into the carry bit.
   adc wtmp1, wtmp1                  // Pull the new bit out from the carry bit.
 
   add wstuff, wstuff, wstuff        // Shift up the stuff bit, to allow for
@@ -671,14 +691,13 @@ usb_phy_write_top:
   /* Write the desired state out (each branch is balanced) */
   bne usb_phy_write_j
 usb_phy_write_k:
-  ldr wpaddr, [wusbphy, #dpSAddr]    // D+ set
-  ldr wnaddr, [wusbphy, #dnCAddr]    // D- clr
+  mov wpaddr, wdpsetreg             // D+ set
+  mov wnaddr, wdnclrreg
   b usb_phy_write_out
   
 usb_phy_write_j:
-  ldr wpaddr, [wusbphy, #dpCAddr]    // D+ clr
-  ldr wnaddr, [wusbphy, #dnSAddr]    // D- set
-  nop
+  mov wpaddr, wdpclrreg             // D+ clr
+  ldr wnaddr, [wusbphy, #dnSAddr]   // D- set
 
 usb_phy_write_out:
   str wpmask, [wpaddr]
@@ -690,7 +709,6 @@ usb_phy_write_out:
   mov wtmp1, #0b111111
   mov wtmp2, wstuff
   and wtmp2, wtmp1
-//  cmp wtmp2, wtmp1
   beq usb_phy_write_stuff_bit
   // 4
 
@@ -706,8 +724,8 @@ usb_phy_write_finished_word:
   beq usb_write_eof
 
 usb_phy_write_calculate_next_pkt:
+  mov wpkt, wnextpkt
   lsl wtmp1, #3
-  ldr wpkt, [wusbphy, wtmp1]
   add wtmp1, #4
   ldr wleft, [wusbphy, wtmp1]
   // 8
@@ -715,13 +733,17 @@ usb_phy_write_calculate_next_pkt:
   b usb_phy_write_top
 
 usb_phy_write_continue_word:
-  .rept 6
+  mov wtmp1, wpktnum
+  sub wtmp1, #1
+  lsl wtmp1, #3
+  ldr wtmp2, [wusbphy, wtmp1]
+  mov wnextpkt, wtmp2
+  .rept 2
   nop
   .endr
 
   b usb_phy_write_top
   // 2
-
 
 usb_phy_write_stuff_bit:
 // 5 vs 8 cycles
@@ -768,41 +790,45 @@ usb_write_eof:
 
   // --- Done Transmitting --- //
 
-  // Now, set both lines to INPUT
-  ldr wtmp1, [wusbphy, #dpDAddr]   // Get the direction address
-  ldr wtmp2, [wtmp1]               // Get the direction value
-  ldr wpmask, [wusbphy, #dpMask]   // Get the mask value for ORing in
+  // Restore sp, since we're done with it
+  ldr wtmp1, [wusbphy, #spSave]
+  mov sp, wtmp1
+
+  // Now, set both lines back to INPUT
+  ldr wtmp1, [wusbphy, #dpDAddr]    // Get the direction address
+  ldr wtmp2, [wtmp1]                // Get the direction value
+  ldr wpmask, [wusbphy, #dpMask]    // Get the mask value for ORing in
   bic wtmp2, wtmp2, wpmask          // Clear the direciton mask
-  ldr wtmp1, [wusbphy, #dpDAddr]   // Get the direction address
-  str wtmp2, [wtmp1]               // Set the direction for Dp
+  ldr wtmp1, [wusbphy, #dpDAddr]    // Get the direction address
+  str wtmp2, [wtmp1]                // Set the direction for Dp
 
-  ldr wtmp1, [wusbphy, #dnDAddr]   // Get the direction address
-  ldr wtmp2, [wtmp1]               // Get the direction value
-  ldr wnmask, [wusbphy, #dnMask]   // Get the mask value for ORing in
+  ldr wtmp1, [wusbphy, #dnDAddr]    // Get the direction address
+  ldr wtmp2, [wtmp1]                // Get the direction value
+  ldr wnmask, [wusbphy, #dnMask]    // Get the mask value for ORing in
   bic wtmp2, wtmp2, wnmask          // Clear the direciton mask
-  ldr wtmp1, [wusbphy, #dnDAddr]   // Get the direction address
-  str wtmp2, [wtmp1]               // Set the direction for Dp
+  ldr wtmp1, [wusbphy, #dnDAddr]    // Get the direction address
+  str wtmp2, [wtmp1]                // Set the direction for Dp
 
+  mov r0, #0
   pop {r3,r4,r5,r6,r7,pc}
-
 
   // Useful functions
 usb_write_state_se0:
-  ldr wpaddr, [wusbphy, #dpCAddr]    // D+ clr
-  ldr wnaddr, [wusbphy, #dnCAddr]    // D- clr
+  mov wpaddr, wdpclrreg             // D+ clr
+  ldr wnaddr, [wusbphy, #dnCAddr]   // D- clr
   b usb_phy_write_out_func
 usb_write_state_j:
-  ldr wpaddr, [wusbphy, #dpSAddr]    // D+ set
-  ldr wnaddr, [wusbphy, #dnCAddr]    // D- clr
+  mov wpaddr, wdpsetreg             // D+ set
+  mov wnaddr, wdnclrreg             // D- clr
   b usb_phy_write_out_func
 usb_write_state_k:
-  ldr wpaddr, [wusbphy, #dpCAddr]    // D+ clr
-  ldr wnaddr, [wusbphy, #dnSAddr]    // D- set
+  mov wpaddr, wdpclrreg             // D+ clr
+  ldr wnaddr, [wusbphy, #dnSAddr]   // D- set
   nop
 usb_phy_write_out_func:
   str wpmask, [wpaddr]
   str wnmask, [wnaddr]
-  b usb_read_wait_23_cycles
+  b usb_read_wait_24_cycles
 
 .endfunc
 .type usbPhyWrite, %function

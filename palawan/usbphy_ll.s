@@ -1,22 +1,6 @@
 .section .ramtext    /* Can also run out of .section .ramtext */
 //.section .text    /* Can also run out of .section .ramtext */
 
-rusbphy  .req sp   /* Pointer to the USBPHY struct, described above */
-outptr  .req r1   /* Outgoing sample buffer (pushed to stack) */
-
-one     .req r1   /* The value 1 */
-reg     .req r2   /* Register to sample pin */
-mash    .req r3   /* Mask/shift to isolate required pin */
-val     .req r4   /* Currently-sampled value */
-
-sample1 .req r5   /* Most recent 32-bits */
-sample2 .req r6   /* Next 32-bits */
-sample3 .req r7   /* Remaining 24-bits */
-
-lastval .req r8   /* What value was the last pin? */
-counter .req r9
-unstuff .req r10
-
 #if 0
   /***************************************************************************
    * USB PHY low-level code
@@ -73,7 +57,7 @@ unstuff .req r10
 .equ dpMask,0x48
 .equ dnMask,0x4c
 
-.equ spSave,0x50
+.equ spSave,0x00
 
   /*
    *
@@ -121,11 +105,31 @@ unstuff .req r10
  */
 //#define USB_PHY_READ_TEST
 
+rusbphy  .req sp   /* Pointer to the USBPHY struct, described above */
+routptr  .req r1   /* Outgoing sample buffer (pushed to stack) */
+
+rone     .req r1   /* The value 1 */
+rreg     .req r2   /* Register to sample pin */
+rmash    .req r3   /* Mask/shift to isolate required pin */
+rval     .req r4   /* Currently-sampled value */
+
+rsample1 .req r5   /* Most recent 32-bits */
+rsample2 .req r6   /* Next 32-bits */
+rsample3 .req r7   /* Remaining 24-bits */
+
+rlastval .req r8   /* What value was the last pin? */
+rcounter .req r9
+runstuff .req r10
+
+rdpiaddr   .req r11
+rdniaddr   .req r12
+
+
 .func usbPhyRead
 .global usbPhyRead
 /*int */usbPhyRead/*(const USBPHY *phy, uint8_t samples[11])*/:
-  push {r4, r5, r6, r7, lr}
-  push {outptr, r2}
+  push {r2,r3,r4,r5,r6,r7,lr}
+  push {routptr}
 
   // We need an extra lo register for the unstuff pattern #0b111111, but
   // we're all out.  As a complete and total hack, re-use the stack pointer
@@ -137,52 +141,46 @@ unstuff .req r10
   mov rusbphy, r0
 
   /* Clear out the register shift-chain */
-  mov sample1, #0
-  mov sample2, #0
-  mov sample3, #0
-  mov counter, sample1
+  mov rsample1, #0
+  mov rsample2, #0
+  mov rsample3, #0
+  mov rcounter, rsample1
   mov r0, #0b11
-  mov unstuff, r0                 // Load 0b11 into unstuff reg, as the header
-                                  // ends with the pattern KK, which starts
-                                  // a run of two.
-  mov r0, #0b111111               // Unstuff mask
-  mov one, #1                     // Actually load the value '1' into the reg.
+  mov runstuff, r0                  // Load 0b11 into unstuff reg, as the header
+                                    // ends with the pattern KK, which starts
+                                    // a run of two.
+  mov r0, #0b111111                 // Unstuff mask
+  mov rone, #1                      // Actually load the value '1' into the reg.
 
-  ldr reg, [rusbphy, #dpIAddr]     // Grab the address for the data input reg.
-  ldr mash, [rusbphy, #dpMask]     // Grab the mask for the bit.
+  ldr rreg, [rusbphy, #dpIAddr]     // Grab the address for the data input reg.
+  ldr rmash, [rusbphy, #dpMask]     // Grab the mask for the bit.
 
   /* Wait for the line to flip */
-  ldr val, [reg]                  // Sample D+, to watch for it flipping
-  and val, val, mash              // Mask off the interesting bit
-  mov lastval, val                // Save the bit for use in looking for sync
+  ldr rval, [rreg]                  // Sample D+, to watch for it flipping
+  and rval, rval, rmash             // Mask off the interesting bit
+  mov rlastval, rval                // Save the bit for use in looking for sync
 
 #if defined(USB_PHY_READ_TEST)
   /* Advance to the next sample */
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  str reg, [rusbphy, #dpIAddr]     // Move read test register up by 4
-  ldr reg, [rusbphy, #dnIAddr]
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  str reg, [rusbphy, #dnIAddr]     // Move read test register up by 4
-  ldr reg, [rusbphy, #dpIAddr]
+  add rreg, #4
+  str rreg, [rusbphy, #dpIAddr]     // Move read test register up by 4
+  ldr rreg, [rusbphy, #dnIAddr]
+  add rreg, #4
+  str rreg, [rusbphy, #dnIAddr]     // Move read test register up by 4
+  ldr rreg, [rusbphy, #dpIAddr]
 #endif /* defined(USB_PHY_READ_TEST) */
 
-  // The loop is 5 cycles on a failure.  One
+  // The loop is 4 cycles on a failure.  One
   // pulse is 32 cycles.  Therefore, loop up
   // to 8 times before giving up.
 #if !defined(USB_PHY_READ_TEST)
-.rept 8
-  ldr val, [reg]                  // Sample USBDP
-  and val, val, mash              // Mask off the interesting bit
-  cmp val, lastval                // Wait for it to change
-  bne usb_phy_read_sync_wait      // When it changes, go wait for sync pulse
+.rept 9
+  ldr rval, [rreg]                  // Sample USBDP
+  and rval, rval, rmash             // Mask off the interesting bit
+  cmp rval, rlastval                // Wait for it to change
+  bne usb_phy_read_sync_wait        // When it changes, go wait for sync pulse
 .endr
-  b usb_phy_read_timeout          // It never changed, so return "timeout".
+  b usb_phy_read_timeout            // It never changed, so return "timeout".
 #endif
 
 usb_phy_read_sync_wait:
@@ -190,32 +188,26 @@ usb_phy_read_sync_wait:
   // Wait until we're in the middle of a pulse.  When we get here, the pulse
   // will have happened between 6 and 10 cycles ago.  Since the middle of a
   // pulse occurs at 16 cycles, delay 8 cycles to line us up.
-//  bl usb_read_wait_8_cycles
+  bl usb_read_wait_13_cycles
 #endif /* !defined(USB_PHY_READ_TEST) */
 
   // Wait for the end-of-header sync pulse, which is when the value
   // repeats itself.  This is the "KK" in the KJKJKJKK training sequence.
 .rept 7
-  ldr val, [reg]                  // Sample USBDP
+  ldr rval, [rreg]                    // Sample USBDP
 #if defined(USB_PHY_READ_TEST)
   /* Advance to the next sample */
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  str reg, [rusbphy, #dpIAddr]     // Move read test register up by 4
-  ldr reg, [rusbphy, #dnIAddr]
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  str reg, [rusbphy, #dnIAddr]     // Move read test register up by 4
-  ldr reg, [rusbphy, #dpIAddr]
+  add rreg, #4
+  str rreg, [rusbphy, #dpIAddr]       // Move read test register up by 4
+  ldr rreg, [rusbphy, #dnIAddr]
+  add rreg, #4
+  str rreg, [rusbphy, #dnIAddr]       // Move read test register up by 4
+  ldr rreg, [rusbphy, #dpIAddr]
 #endif /* defined(USB_PHY_READ_TEST) */
-  and val, val, mash              // Mask off the interesting bit
-  cmp lastval, val
+  and rval, rval, rmash               // Mask off the interesting bit
+  cmp rlastval, rval
   beq start_reading_usb
-  mov lastval, val
+  mov rlastval, rval
 #if !defined(USB_PHY_READ_TEST)
   bl usb_read_wait_27_cycles
 #endif /* defined(USB_PHY_READ_TEST) */
@@ -227,123 +219,119 @@ usb_phy_read_sync_wait:
    */
 start_reading_usb:
 
-  /* Adjust lastval so that it's in the correct position -- we skip doing
+  /* Adjust rlastval so that it's in the correct position -- we skip doing
      this above since we're only interested in the value changing, not in
      what the value is.  However, we're now interested in what the value
      is, so we now deal with shifts instead of masks, and always mask by
      #1.
    */
-  mov val, lastval
-  ldr mash, [rusbphy, #dpShift]
-  ror val, val, mash
-  and val, val, one
-  mov lastval, val
+  mov rval, rlastval
+  ldr rmash, [rusbphy, #dpShift]
+  ror rval, rval, rmash
+  and rval, rval, rone
+  mov rlastval, rval
+
+  ldr rreg, [rusbphy, #dpIAddr]       // Cache the address of the D+ input bank
+  mov rdpiaddr, rreg                  // to save one cycle.
+  ldr rreg, [rusbphy, #dnIAddr]       // Cache the address of the D- input bank
+  mov rdniaddr, rreg                  // to save another cycle.
 
 usb_phy_read_get_usb_bit:
-  ldr val, [rusbphy, #dpIAddr]     // Get the address of the D+ input bank
+  mov rval, rdpiaddr                  // Get the address of the D+ input bank.
 #if defined(USB_PHY_READ_TEST)
   /* Advance to the next sample */
-  mov reg, val
-  ldr val, [val]                  // Actually sample D+
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  str reg, [rusbphy, #dpIAddr]     // Move read test register up by 4
-  ldr reg, [rusbphy, #dnIAddr]
-  ldr mash, [reg]
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  str reg, [rusbphy, #dnIAddr]   // Move read test register up by 4
-  mov reg, mash
+  mov rreg, rval
+  ldr rval, [rval]                    // Actually sample D+
+  add rreg, #4
+  str rreg, [rusbphy, #dpIAddr]       // Move read test register up by 4
+  ldr rreg, [rusbphy, #dnIAddr]
+  ldr rmash, [rreg]
+  add rreg, #4
+  str rreg, [rusbphy, #dnIAddr]       // Move read test register up by 4
+  mov rreg, rmash
 #else
-  ldr reg, [rusbphy, #dnIAddr]    // Get the address of the D- input bank
-  ldr val, [val]                  // Actually sample D+
-  ldr reg, [reg]                 // Also sample D-
+  mov rreg, rdniaddr                  // Get the address of the D+ input bank.
+  ldr rval, [rval]                    // Actually sample D+
+  ldr rreg, [rreg]                    // Also sample D-
 #endif /* defined(USB_PHY_READ_TEST) */
-  ldr mash, [rusbphy, #dpShift]    // Get the mask of the D+ bit
-  ror val, val, mash              // Rotate the value down to bit position 1.
-  and val, val, one               // Mask off everything else.
-  // 7 [5]
+  ldr rmash, [rusbphy, #dpShift]      // Get the mask of the D+ bit
+  ror rval, rval, rmash               // Rotate the value down to bit 1.
+  and rval, rval, rone                // Mask off everything else.
+  // 8
 
   // Check for SE0
 #if 1
-  ldr mash, [rusbphy, #dnMask]
-  and reg, reg, mash
-  add reg, reg, val               // An end-of-frame is indicated by two
-                                  // frames of SE0.  If this is the case,
-                                  // then the result of adding these together
-                                  // will result in 0.
-  beq usb_phy_read_exit           // Exit if so.
+  ldr rmash, [rusbphy, #dnMask]
+  and rreg, rreg, rmash
+  add rreg, rreg, rval                // An end-of-frame is indicated by two
+                                      // frames of SE0.  If this is the case,
+                                      // then the result of adding these
+                                      // together will result in 0.
+  beq usb_phy_read_exit               // Exit if so.
 #else
-  mov mash, counter
-  cmp mash, #88
+  mov rmash, rcounter
+  cmp rmash, #88
   beq usb_phy_read_exit
 #endif
-  // 4 [3]
+  // 5
 
-  mov mash, lastval
-  mov lastval, val
-  eor val, mash                   // Check to see if the state has changed.
-  mvn val, val                    // Invert, as 1 ^ 1 or 0 ^ 0 should be 1.
-  and val, val, one               // Mask off everything but the last bit.
+  mov rmash, rlastval
+  mov rlastval, rval
+  eor rval, rmash                     // Check to see if the state has changed.
+  mvn rval, rval                      // Invert, as 1 ^ 1 or 0 ^ 0 should be 1.
+  and rval, rval, rone                // Mask off everything but the last bit.
 
-  add unstuff, unstuff, unstuff   // Shift the "unstuff" value up by 1.
-  add unstuff, unstuff, val       // "or" in the one-bit "val" to the bottom.
+  add runstuff, runstuff, runstuff    // Shift the "unstuff" value up by 1.
+  add runstuff, runstuff, rval        // "or" in the one-bit rval to the bottom.
 
-  lsr val, val, one               // Shift the state into the carry bit
-  adc sample1, sample1, sample1   // Propagate the carry bit up
-  adc sample2, sample2, sample2   // Propagate the carry bit up
-  adc sample3, sample3, sample3   // Propagate the carry bit up
+  lsr rval, rval, rone                // Shift the state into the carry bit
+  adc rsample1, rsample1, rsample1    // Propagate the carry bit up
+  adc rsample2, rsample2, rsample2    // Propagate the carry bit up
+  adc rsample3, rsample3, rsample3    // Propagate the carry bit up
   // 11 [9]
 
-  /* Restore values, increase counter */
-  add counter, counter, one
+  /* Restore values, increase rcounter */
+  add rcounter, rcounter, rone
   // 1
+
+  nop
+  nop
 
   // Figure out if we need to unstuff, or if we can just continue to the
   // next bit.
   // Six consecutive USB states will be followed by a dummy
   // state flip.  Ignore this.
-  mov reg, unstuff
-  and reg, reg, r0
-  cmp reg, r0
+  mov rreg, runstuff
+  and rreg, rreg, r0
+  cmp rreg, r0
   bne usb_phy_read_get_usb_bit
-  // 4 [0]
+  // 5 [0]
 
 usb_unstuff:
-  nop                               // We get here when the current bit has one
-                                    // more clock cycle left.  Add a nop just
-                                    // to make the cycle-counting easier.
+  nop                                 // We get here when the current bit has
+                                      // one more clock cycle left.  Add a nop
+                                      // just to make the cycle-counting easier.
   /* --- New pulse starts here --- */
-  // NOTE that we don't increment "counter" here.
-  mov unstuff, one                  // We're skipping over one bit, which
-                                    // results in a new run of one.
+  // NOTE that we don't increment "rcounter" here.
+  mov runstuff, rone                  // We're skipping over one bit, which
+                                      // results in a new run of one.
   // 1
 
 #if defined(USB_PHY_READ_TEST)
-  ldr reg, [rusbphy, #dnIAddr]
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  str reg, [rusbphy, #dnIAddr]       // Move read test register up by 4
-  ldr reg, [rusbphy, #dpIAddr]
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  add reg, reg, one
-  str reg, [rusbphy, #dpIAddr]       // Move read test register up by 4
+  ldr rreg, [rusbphy, #dnIAddr]
+  add rreg, #4
+  str rreg, [rusbphy, #dnIAddr]       // Move read test register up by 4
+  ldr rreg, [rusbphy, #dpIAddr]
+  add rreg, #4
+  str rreg, [rusbphy, #dpIAddr]       // Move read test register up by 4
 #endif /* defined(USB_PHY_READ_TEST) */
 
 
   /* Invert the last value, since a false 0 was added to the stream */
-  mov reg, lastval                  // Read the current last val into a lo reg.
-  mvn reg, reg                      // Negate the value.
-  and reg, reg, one                 // Mask it with 0b1
-  mov lastval, reg                  // Save it back into a lo reg.
+  mov rreg, rlastval                  // Read the current last val into a lo reg.
+  mvn rreg, rreg                      // Negate the value.
+  and rreg, rreg, rone                // Mask it with 0b1
+  mov rlastval, rreg                  // Save it back into a lo reg.
   // 4
 
 #if !defined(USB_PHY_READ_TEST)
@@ -355,82 +343,81 @@ usb_unstuff:
 usb_phy_read_exit:
   ldr r2, [rusbphy, #spSave]
   mov sp, r2
-  pop {outptr, r2}
+  pop {routptr}
 
-  /* Bits come across in the wrong endianess.  Fix that. */
-  rev sample1, sample1
-  rev sample2, sample2
-  rev sample3, sample3
-  str sample1, [r2, #8]
-  str sample2, [r2, #4]
-  str sample3, [r2, #0]
+  // Allocate 12 bytes on the stack.
+  sub r2, #12
+
+  // Store samples on the stack, where we can swap values and copy to dest.
+  str rsample1, [r2, #0]
+  str rsample2, [r2, #4]
+  str rsample3, [r2, #8]
 
   retval .req r0
-  dstptr .req r1
   srcptr .req r2
   dstoff .req r3
   srcoff .req r4
   endoff .req r5
   tmpval .req r6
+  table  .req r7
 
-  /* Count the number of bytes read (counter / 8) */
-  mov retval, counter
+  /* Count the number of bytes read (rcounter / 8) */
+  mov retval, rcounter
   mov r3, #3
-  asr retval, retval, r3              // Number of bytes read (return value)
-  cmp retval, #11
+  asr retval, #3                  // Return number of bytes (not bits) read.
+  cmp retval, #11                 // Error out if we read more than 11 bytes.
   bgt usb_phy_read_overflow_exit
 
   cmp retval, #0
   beq usb_phy_read_no_data_exit
 
-  mov srcoff, retval
-  mov endoff, #12
-#if 1 // XXX testing
-  sub srcoff, endoff, srcoff
-#else
-  mov srcoff, #1
-  mov retval, #11
-#endif
-  mov dstoff, #0
+  mov srcoff, #0
+  mov dstoff, retval
+  sub dstoff, #1
+  ldr table, =bit_reverse_table_256
 
 copy_loop_top:
   ldrb tmpval, [srcptr, srcoff]
-  add srcoff, srcoff, #1
+  add srcoff, #1
 
-  strb tmpval, [dstptr, dstoff]
-  add dstoff, dstoff, #1
+  // Reverse bit order using the bit_reverse_table_256
+  add tmpval, table
+  ldrb tmpval, [tmpval]
 
-  cmp srcoff, endoff
+  strb tmpval, [routptr, dstoff]
+  sub dstoff, dstoff, #1
+
+  cmp srcoff, retval
   bne copy_loop_top
 final_exit:
-  pop {r4,r5,r6,r7,pc}
+  pop {r2,r3,r4,r5,r6,r7,pc}
 
   /* Read too many bits, return -2 */
 usb_phy_read_overflow_exit:
   mov r1, #2
   mov r0, #0
   sub r0, r0, r1
-  pop {r4,r5,r6,r7,pc}
+  pop {r2,r3,r4,r5,r6,r7,pc}
 
 usb_phy_read_no_data_exit:
   mov r0, #0
-  pop {r4,r5,r6,r7,pc}
+  pop {r2,r3,r4,r5,r6,r7,pc}
 
 usb_phy_sync_timeout:
   ldr r2, [rusbphy, #spSave]
   mov sp, r2
-  pop {outptr, r2}
+  pop {routptr}
   mov r0, #0
   sub r0, r0, #3
-  pop {r4,r5,r6,r7,pc}
+  pop {r2,r3,r4,r5,r6,r7,pc}
 
 usb_phy_read_timeout:
   ldr r2, [rusbphy, #spSave]
   mov sp, r2
-  pop {outptr, r2}
+  pop {routptr}
   mov r0, #0
   sub r0, r0, #1
-  pop {r4,r5,r6,r7,pc}
+  pop {r2,r3,r4,r5,r6,r7,pc}
 
 usb_read_wait_32_cycles: nop
 usb_read_wait_31_cycles: nop
@@ -750,7 +737,7 @@ usb_phy_write_stuff_bit:
 // The real path is 3 cycles longer
 // There are 2 + 2 + 7 skipped cycles here, too.
   bl usb_read_wait_13_cycles
-  mov wtmp1, #0b111110              // Clear out the bit-stuff counter
+  mov wtmp1, #0b111110              // Clear out the bit-stuff rcounter
   mov wstuff, wtmp1
   // 2
 
@@ -843,25 +830,28 @@ tpmask  .req r2   /* Write mask for D+ line */
 tnaddr  .req r3   /* Write "set-" or "clear-bit" address for D- line */
 tnmask  .req r4   /* Write mask for D- line */
 
+treg    .req r5
+tval    .req r6
+
 .func usbPhyWriteTestPattern
 .global usbPhyWriteTestPattern
 usbPhyWriteTestPattern:
   push {lr}
 
   /* Set D+ to output */
-  ldr reg, [tusbphy, #dpDAddr]     // Get the direction address
-  ldr val, [reg]                  // Get the direction value
+  ldr treg, [tusbphy, #dpDAddr]     // Get the direction address
+  ldr tval, [treg]                  // Get the direction value
   ldr tpmask, [tusbphy, #dpMask]     // Get the mask value for ORing in
-  orr val, val, tpmask              // Set the direciton mask
-  str val, [reg]                  // Set the direction for Dp
+  orr tval, tval, tpmask              // Set the direciton mask
+  str tval, [treg]                  // Set the direction for Dp
 
   /* Set D- to output */
-  ldr reg, [tusbphy, #dnDAddr]     // Get the direction address
-  ldr val, [reg]                  // Get the direction value
+  ldr treg, [tusbphy, #dnDAddr]     // Get the direction address
+  ldr tval, [treg]                  // Get the direction value
   ldr tnmask, [tusbphy, #dnMask]     // Get the mask value for ORing in
-  orr val, val, tnmask              // Set the direciton mask
-  ldr reg, [tusbphy, #dnDAddr]     // Get the direction address
-  str val, [reg]                  // Set the direction for Dp
+  orr tval, tval, tnmask              // Set the direciton mask
+  ldr treg, [tusbphy, #dnDAddr]     // Get the direction address
+  str tval, [treg]                  // Set the direction for Dp
 
   ldr tpmask, [r0, #dpMask]
   ldr tnmask, [r0, #dnMask]

@@ -133,13 +133,13 @@ int main(void)
   halInit();
   chSysInit();
 
-#if 1
+#if 0
   while (1) {
     chSysLock();
     *((volatile uint32_t *)0xf80000cc) = 0x80; /* Toggle green LED */
     usbPhyWriteTest();
     chSysUnlock();
-    chThdSleepSeconds(2);
+    chThdSleepSeconds(1);
   }
 #endif
 

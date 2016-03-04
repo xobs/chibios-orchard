@@ -6,37 +6,6 @@
 #include "usbphy.h"
 #include "usbmac.h"
 
-static const char *pid_to_str(uint8_t pid) {
-  switch (pid) {
-    /* Data packets */
-    case 0xf0: return "MDATA";
-    case 0xe1: return "DATA2";
-    case 0xd2: return "DATA1";
-    case 0xc3: return "DATA0";
-
-    /* Token packets, with CRC-5 */
-    case 0xb4: return "SETUP";
-    case 0xa5: return "SOF";
-    case 0x96: return "IN";
-    case 0x87: return "OUT";
-
-    /* One-byte packets, no CRC required */
-    case 0x78: return "STALL";
-    case 0x69: return "NYET";
-    case 0x5a: return "NAK";
-    case 0x4b: return "ACK";
-
-    /* Special cases (also no CRC?) */
-    case 0x3c: return "PRE";
-    case 0x2d: return "PING";
-    case 0x1e: return "SPLIT";
-    case 0x0f: return "RESERVED";
-
-    default:   return "UNKNOWN";
-  }
-}
-
-
 void cmd_usbmac(BaseSequentialStream *chp, int argc, char *argv[])
 {
   struct usb_mac_statistics mac_stats;
@@ -56,7 +25,7 @@ void cmd_usbmac(BaseSequentialStream *chp, int argc, char *argv[])
   while ((packet = usbMacGetPacket()) != NULL) {
     count++;
     chprintf(chp, "Packet %d:\r\n", count);
-    chprintf(chp, "    %02x %s\r\n", packet->pid, pid_to_str(packet->pid));
+    chprintf(chp, "    %02x %s\r\n", packet->pid, usbPidToStr(packet->pid));
     chprintf(chp, "    %d bytes of data\r\n", packet->size);
     if (packet->size) {
       chprintf(chp, "    -->");

@@ -71,12 +71,43 @@ static int validate_data(const uint8_t *data, int size) {
 
   if (size < 2)
     return -1;
-  return 0;
 
   result = crc16(data, size - 2, 0xffff, 0x8005);
   compare = ((data[size - 2] << 8) & 0xff00) | ((data[size - 1] << 0) & 0x00ff);
 
   return compare - result;
+}
+
+const char *usbPidToStr(uint8_t pid) {
+  switch (pid) {
+
+    /* Data packets */
+    case USB_PID_DATA0:     return "DATA0";
+    case USB_PID_DATA1:     return "DATA1";
+    case USB_PID_DATA2:     return "DATA2";
+    case USB_PID_MDATA:     return "MDATA";
+
+    /* Token packets, with CRC-5 */
+    case USB_PID_OUT:       return "OUT";
+    case USB_PID_IN:        return "IN";
+    case USB_PID_SOF:       return "SOF";
+    case USB_PID_SETUP:     return "SETUP";
+
+    /* One-byte packets, no CRC required */
+    case USB_PID_ACK:       return "ACK";
+    case USB_PID_NAK:       return "NAK";
+    case USB_PID_NYET:      return "NYET";
+    case USB_PID_STALL:     return "STALL";
+
+    /* Special cases (also no CRC?) */
+    case USB_PID_SPLIT:     return "SPLIT";
+    case USB_PID_PING:      return "PING";
+    case USB_PID_ERR:       return "ERR";
+
+    case USB_PID_RESERVED:  return "RESERVED";
+
+    default:                return "UNKNOWN";
+  }
 }
 
 int usbMacResetStatistics(void) {
@@ -102,6 +133,11 @@ void usbMacGetStatistics(struct usb_mac_statistics *stats) {
   stats->buffer_size = MAX_PACKET_BUFFERS;
 }
 
+static void usb_send_ack(void) {
+    uint8_t ak = USB_PID_ACK;
+    usbPhyWriteDirect(&ak, 1);
+}
+
 int usbMacInsert(uint8_t *temp_packet, int packet_size) {
 
   int next_packet_idx = (usb_packet_write_head + 1) & USB_PACKET_BUFFER_MASK;
@@ -114,10 +150,12 @@ int usbMacInsert(uint8_t *temp_packet, int packet_size) {
   switch (temp_packet[0]) {
 
   /* Data packets, with CRC-16 */
-  case 0xf0: /* MDATA */
-  case 0xe1: /* DATA2 */
-  case 0xd2: /* DATA1 */
   case 0xc3: /* DATA0 */
+  case 0x4b: /* DATA1 */
+  case 0x87: /* DATA2 */
+  case 0x0f: /* MDATA */
+
+    usb_send_ack();
     if (validate_data(temp_packet + 1, packet_size - 1)) {
       stats_crc16_errors++;
       return -2;
@@ -129,18 +167,16 @@ int usbMacInsert(uint8_t *temp_packet, int packet_size) {
     memcpy(usb_packets[usb_packet_write_head].data,
            temp_packet + 1,
            packet_size - 3);
+
     break;
 
   /* Token packets, with CRC-5 */
-  case 0xb4: /* SETUP */
+  case 0xe1: /* OUT */
+  case 0x69: /* IN */
+    usb_send_ack();
   case 0xa5: /* SOF */
-  case 0x96: /* IN */
-  case 0x87: /* OUT */
+  case 0x2d: /* SETUP */
     /* Packet size is 8-bit PID + 11 bits of data + CRC-5 */
-    if (packet_size != 3) {
-      stats_errors++;
-      return -1;
-    }
     if (validate_token(temp_packet + 1, packet_size - 1)) {
       stats_crc5_errors++;
 #warning "CRC-5 failed, copying packet anyway"
@@ -155,10 +191,10 @@ int usbMacInsert(uint8_t *temp_packet, int packet_size) {
     break;
 
   /* One-byte packets, no CRC required */
-  case 0x78: /* STALL */
-  case 0x69: /* NYET */
+  case 0xd2: /* ACK */
   case 0x5a: /* NAK */
-  case 0x4b: /* ACK */
+  case 0x96: /* NYET */
+  case 0x1e: /* STALL */
     /* Packet size is 8-bit PID only */
     if (packet_size != 1) {
       stats_errors++;
@@ -169,10 +205,9 @@ int usbMacInsert(uint8_t *temp_packet, int packet_size) {
     break;
 
   /* Special cases (also no CRC?) */
-  case 0x3c: /* PRE */
-  case 0x2d: /* PING */
-  case 0x1e: /* SPLIT */
-  case 0x0f: /* RESERVED */
+  case 0x78: /* SPLIT */
+  case 0xb4: /* PING */
+  case 0x3c: /* ERR */
     if (packet_size != 2) {
       stats_errors++;
       return -1;

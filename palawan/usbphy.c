@@ -13,14 +13,14 @@
     + 16            /* CRC16 */                         \
     + 2             /* SE0 End-of-packet */             \
     + 8             /* Extra padding (unnecessary?) */
-#define MAX_BIT_BUFFERS 16
-#define MAX_BIT_BUFFERS_MASK 0xf
+#define MAX_SEND_QUEUES 16
+#define MAX_SEND_QUEUES_MASK 0xf
 
 /* Outgoing queues */
-static uint8_t bit_queues[MAX_BIT_BUFFERS][BIT_BUFFER_SIZE];
-static uint8_t bit_queue_sizes[MAX_BIT_BUFFERS];
-static uint8_t bit_queue_write_head;
-static uint8_t bit_queue_read_head;
+static uint8_t send_queues[MAX_SEND_QUEUES][BIT_BUFFER_SIZE];
+static uint8_t send_queue_sizes[MAX_SEND_QUEUES];
+static uint8_t send_queue_write_head;
+static uint8_t send_queue_read_head;
 
 static int usb_initialized;
 event_source_t usb_phy_data_available;
@@ -131,69 +131,6 @@ static struct USBPHY usbPhyTestPatternPins = {
   .usbdnShift = 1,
 };
 
-static int usb_convert_mac_to_phy(uint8_t *output,
-                                  const uint8_t *input,
-                                  int bytes) {
-  int out_bits;
-  int input_byte;
-  int input_bit;
-  int run_length;
-  enum state last_state;
-  enum state cur_state;
-  
-  out_bits = 0;
-  input_bit = 0;
-  input_byte = 0;
-  run_length = 0;
-
-  /* Generate the start-of-frame pattern */
-  output[out_bits++] = state_k;
-  output[out_bits++] = state_j;
-  output[out_bits++] = state_k;
-  output[out_bits++] = state_j;
-  output[out_bits++] = state_k;
-  output[out_bits++] = state_j;
-  output[out_bits++] = state_k;
-  output[out_bits++] = state_k;
-
-  last_state = cur_state = state_k;
-  run_length = 2;
-
-  for (input_byte = 0; input_byte < bytes; input_byte++) {
-    for (input_bit = 7; input_bit >= 0; input_bit--) {
-      if (input[input_byte] & (1 << input_bit)) {
-        cur_state = last_state;
-        run_length++;
-
-        /* Bit-stuffing.  More than 6 1s in a row get turned into a 0 */
-        if (run_length > 6) {
-          if (cur_state == state_j)
-            cur_state = state_k;
-          else
-            cur_state = state_j;
-          run_length = 0;
-        }
-      }
-      else {
-        run_length = 0;
-        if (cur_state == state_j)
-          cur_state = state_k;
-        else
-          cur_state = state_j;
-      }
-      output[out_bits++] = cur_state;
-      last_state = cur_state;
-    }
-  }
-
-  /* Generate the end-of-frame pattern */
-  output[out_bits++] = state_se0;
-  output[out_bits++] = state_se0;
-  return out_bits;
-
-  return bytes;
-}
-
 int usbPhyResetStatistics(void) {
   stats_errors = 0;
   stats_num_packets = 0;
@@ -212,23 +149,18 @@ void usbPhyGetStatistics(struct usb_phy_statistics *stats) {
   stats->timeout = stats_timeout;
   stats->no_end_of_sync = stats_no_end_of_sync;
   stats->no_end_of_frame = stats_no_end_of_frame;
-  stats->out_read_head = bit_queue_read_head;
-  stats->out_write_head = bit_queue_write_head;
-  stats->out_buffer_size = MAX_BIT_BUFFERS;
+  stats->out_read_head = send_queue_read_head;
+  stats->out_write_head = send_queue_write_head;
+  stats->out_buffer_size = MAX_SEND_QUEUES;
   stats->timestamps = stats_timestamps;
   stats->timestamp_count = stats_timestamps_offset;
 }
 
 int usbPhyQueue(const uint8_t *buffer, int buffer_size) {
 
-  int bit_length = usb_convert_mac_to_phy(bit_queues[bit_queue_write_head],
-                                          buffer,
-                                          buffer_size);
-  if (bit_length <= 0)
-    return bit_length;
-
-  bit_queue_sizes[bit_queue_write_head] = bit_length;
-  bit_queue_write_head = (bit_queue_write_head + 1) & MAX_BIT_BUFFERS_MASK;
+  send_queue_sizes[send_queue_write_head] = buffer_size;
+  memcpy(send_queues[send_queue_write_head], buffer, buffer_size);
+  send_queue_write_head = (send_queue_write_head + 1) & MAX_SEND_QUEUES_MASK;
   osalSysLock();
   osalThreadResumeI(&usb_thread, MSG_OK);
   osalSysUnlock();
@@ -324,30 +256,23 @@ err:
 }
 
 int usbPhyWriteDirect(const uint8_t *buffer, int size) {
-  uint8_t out_buffer[BIT_BUFFER_SIZE];
-  int bit_length;
-  
-  bit_length = usb_convert_mac_to_phy(out_buffer,
-                                      buffer,
-                                      size);
-
-  stats_timestamps[stats_timestamps_offset++] = 0x00020000 | SysTick->VAL;
-  stats_timestamps_offset &= stats_timestamps_offset_mask;
-
-  return usbPhyWrite(&usbPhyPins, out_buffer, bit_length);
+  //stats_timestamps[stats_timestamps_offset++] = 0x00020000 | SysTick->VAL;
+  //stats_timestamps_offset &= stats_timestamps_offset_mask;
+  return usbPhyWrite(&usbPhyPins, buffer, size);
 }
 
 static int test_num = 0;
 void usbPhyWriteTest(void) {
-  uint8_t buffer[11] = {
+  uint8_t buffer[] = {
 //    0xC3, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, 0xDD, 0x94,
 //    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 //    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 //    0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 
 //    0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
-      0xc3, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xaa, 0x55,
+//    0xc3, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xaa, 0x55,
+    0xd2
   };
-  usbPhyWrite(&usbPhyTestPatternPins, buffer, 11 - test_num);
+  usbPhyWrite(&usbPhyTestPatternPins, buffer, sizeof(buffer));
   test_num++;
   if (test_num > 10)
     test_num = 0;

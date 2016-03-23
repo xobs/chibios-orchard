@@ -204,22 +204,40 @@ static void usbStateTransitionI(void) {
   return;
 }
 
-static uint32_t bit_num_lut[12][7] = {
-  {  0,  0,  0,   0,   0, 0, 0 },
+/*
+   This LUT pre-computes various parameters that vary depending on the
+   number of bits to copy.
 
-  {  8,  0,  0,   1,   0, 0, 0 },
-  { 16,  0,  0,   1,   0, 0, 0 },
-  { 24,  0,  0,   1,   0, 0, 0 },
-  { 32,  0,  0,   1,   0, 0, 0 },
+   The internal data copies up to 11 bytes of USB packet data into three
+   "cells" in the USBPHY struct.  Each cell contains up to 32-bits of data,
+   plus an indicator of how much data is present in that cell.
 
-  {  8, 32,  0,   2,   1, 0, 0 },
-  { 16, 32,  0,   2,   1, 0, 0 },
-  { 24, 32,  0,   2,   1, 0, 0 },
-  { 32, 32,  0,   2,   1, 0, 0 },
+   The first three bytes of the LUT are the number of bits in each of the
+   three cells.  As each cell has a different amount of data, each cell
+   gets its own bit count.
 
-  {  8, 32, 32,   3,   2, 1, 0 },
-  { 16, 32, 32,   3,   2, 1, 0 },
-  { 24, 32, 32,   3,   2, 1, 0 },
+   The next byte of LUT indicates which cell to start on.
+
+   The final three bytes of LUT indicate where, in the three-word buffer,
+   each cell will pull data from.
+ */
+static uint8_t bit_num_lut[12][7] = {
+  /* Bits per cell    Starting cell   Source array */
+  {  0,  0,  0,       0,              0, 0, 0 },
+
+  {  8,  0,  0,       1,              0, 0, 0 },
+  { 16,  0,  0,       1,              0, 0, 0 },
+  { 24,  0,  0,       1,              0, 0, 0 },
+  { 32,  0,  0,       1,              0, 0, 0 },
+
+  {  8, 32,  0,       2,              1, 0, 0 },
+  { 16, 32,  0,       2,              1, 0, 0 },
+  { 24, 32,  0,       2,              1, 0, 0 },
+  { 32, 32,  0,       2,              1, 0, 0 },
+
+  {  8, 32, 32,       3,              2, 1, 0 },
+  { 16, 32, 32,       3,              2, 1, 0 },
+  { 24, 32, 32,       3,              2, 1, 0 },
 };
 
 /* Expose the "rev" instruction to C */
@@ -232,11 +250,11 @@ static inline __attribute__((always_inline)) uint32_t __rev(uint32_t val) {
 #define __rev(x) x
 #endif
 
-int usb_phy_write_prepare(union USBPHYInternalData *internal,
+static int usb_phy_write_prepare(union USBPHYInternalData *internal,
                                  const uint32_t buffer[3],
                                  int size) {
 
-  uint32_t *num_bits = bit_num_lut[size];
+  uint8_t *num_bits = bit_num_lut[size];
   uint32_t *scratch = internal->scratch;
 
   /* Copy the number of bits in each slot from the LUT. */

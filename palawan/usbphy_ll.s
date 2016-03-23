@@ -7,8 +7,8 @@
    * 
    * Exports the following functions:
    *
-   *    int usbPhyRead(USBPhy *phy, uint8_t buffer[11], uint32_t scratch[3])
-   *    void usbPhyWrite(USBPhy *phy, uint8_t buffer[11], uint32_t count)
+   *    int usbPhyReadI(USBPhy *phy, uint8_t buffer[11], uint32_t scratch[3])
+   *    void usbPhyWriteI(USBPhy *phy, uint8_t buffer[11], uint32_t count)
    *
    * Interrupts are disabled during this code, since it is time-critical.
    * Note that as a Kinetis "feature", jumps of more than 48 bytes can
@@ -42,22 +42,22 @@
 #endif
 
 /* [r|w]usbphy offsets */
-.equ dpIAddr,0x20
-.equ dpSAddr,0x24
-.equ dpCAddr,0x28
-.equ dpDAddr,0x2c
-.equ dpShift,0x30
+.equ dpIAddr,0x24
+.equ dpSAddr,0x28
+.equ dpCAddr,0x2c
+.equ dpDAddr,0x30
+.equ dpShift,0x34
 
-.equ dnIAddr,0x34
-.equ dnSAddr,0x38
-.equ dnCAddr,0x3c
-.equ dnDAddr,0x40
-.equ dnShift,0x44
+.equ dnIAddr,0x38
+.equ dnSAddr,0x3c
+.equ dnCAddr,0x40
+.equ dnDAddr,0x44
+.equ dnShift,0x48
 
-.equ dpMask,0x48
-.equ dnMask,0x4c
+.equ dpMask,0x4c
+.equ dnMask,0x50
 
-.equ spSave,0x00
+.equ spSave,0x20
 
   /*
    *
@@ -125,9 +125,9 @@ rdpiaddr   .req r11
 rdniaddr   .req r12
 
 
-.func usbPhyRead
-.global usbPhyRead
-/*int */usbPhyRead/*(const USBPHY *phy, uint8_t samples[11])*/:
+.func usbPhyReadI
+.global usbPhyReadI
+/*int */usbPhyReadI/*(const USBPHY *phy, uint8_t samples[11])*/:
   push {r2,r3,r4,r5,r6,r7,lr}
   push {routptr}
 
@@ -188,7 +188,7 @@ usb_phy_read_sync_wait:
   // Wait until we're in the middle of a pulse.  When we get here, the pulse
   // will have happened between 6 and 10 cycles ago.  Since the middle of a
   // pulse occurs at 16 cycles, delay 8 cycles to line us up.
-  bl usb_read_wait_13_cycles
+  bl usb_phy_wait_13_cycles
 #endif /* !defined(USB_PHY_READ_TEST) */
 
   // Wait for the end-of-header sync pulse, which is when the value
@@ -209,7 +209,7 @@ usb_phy_read_sync_wait:
   beq start_reading_usb
   mov rlastval, rval
 #if !defined(USB_PHY_READ_TEST)
-  bl usb_read_wait_27_cycles
+  bl usb_phy_wait_27_cycles
 #endif /* defined(USB_PHY_READ_TEST) */
 .endr
   b usb_phy_sync_timeout
@@ -335,7 +335,7 @@ usb_unstuff:
   // 4
 
 #if !defined(USB_PHY_READ_TEST)
-  bl usb_read_wait_23_cycles
+  bl usb_phy_wait_23_cycles
 #endif /* defined(USB_PHY_READ_TEST) */
   b usb_phy_read_get_usb_bit
   // 2
@@ -345,6 +345,7 @@ usb_phy_read_exit:
   mov sp, r2
   pop {routptr}
 
+#if 0
   // Allocate 12 bytes on the stack.
   sub r2, #12
 
@@ -352,6 +353,7 @@ usb_phy_read_exit:
   str rsample1, [r2, #0]
   str rsample2, [r2, #4]
   str rsample3, [r2, #8]
+#endif
 
   retval .req r0
   srcptr .req r2
@@ -371,6 +373,7 @@ usb_phy_read_exit:
   cmp retval, #0
   beq usb_phy_read_no_data_exit
 
+#if 0
   mov srcoff, #0
   mov dstoff, retval
   sub dstoff, #1
@@ -389,6 +392,11 @@ copy_loop_top:
 
   cmp srcoff, retval
   bne copy_loop_top
+#else
+  str rsample1, [routptr, #0]
+  str rsample2, [routptr, #4]
+  str rsample3, [routptr, #8]
+#endif
 final_exit:
   pop {r2,r3,r4,r5,r6,r7,pc}
 
@@ -419,42 +427,47 @@ usb_phy_read_timeout:
   sub r0, r0, #1
   pop {r2,r3,r4,r5,r6,r7,pc}
 
-usb_read_wait_32_cycles: nop
-usb_read_wait_31_cycles: nop
-usb_read_wait_30_cycles: nop
-usb_read_wait_29_cycles: nop
-usb_read_wait_28_cycles: nop
-usb_read_wait_27_cycles: nop
-usb_read_wait_26_cycles: nop
-usb_read_wait_25_cycles: nop
-usb_read_wait_24_cycles: nop
-usb_read_wait_23_cycles: nop
-usb_read_wait_22_cycles: nop
-usb_read_wait_21_cycles: nop
-usb_read_wait_20_cycles: nop
-usb_read_wait_19_cycles: nop
-usb_read_wait_18_cycles: nop
-usb_read_wait_17_cycles: nop
-usb_read_wait_16_cycles: nop
-usb_read_wait_15_cycles: nop
-usb_read_wait_14_cycles: nop
-usb_read_wait_13_cycles: nop
-usb_read_wait_12_cycles: nop
-usb_read_wait_11_cycles: nop
-usb_read_wait_10_cycles: nop
-usb_read_wait_9_cycles:  nop
-usb_read_wait_8_cycles:  nop
-usb_read_wait_7_cycles:  nop
-usb_read_wait_6_cycles:  nop
-usb_read_wait_5_cycles:  mov pc, lr
-
 .endfunc
-.type usbPhyRead, %function
-.size usbPhyRead, .-usbPhyRead
+.type usbPhyReadI, %function
+.size usbPhyReadI, .-usbPhyReadI
+
+
+
+usb_phy_wait_32_cycles: nop
+usb_phy_wait_31_cycles: nop
+usb_phy_wait_30_cycles: nop
+usb_phy_wait_29_cycles: nop
+usb_phy_wait_28_cycles: nop
+usb_phy_wait_27_cycles: nop
+usb_phy_wait_26_cycles: nop
+usb_phy_wait_25_cycles: nop
+usb_phy_wait_24_cycles: nop
+usb_phy_wait_23_cycles: nop
+usb_phy_wait_22_cycles: nop
+usb_phy_wait_21_cycles: nop
+usb_phy_wait_20_cycles: nop
+usb_phy_wait_19_cycles: nop
+usb_phy_wait_18_cycles: nop
+usb_phy_wait_17_cycles: nop
+usb_phy_wait_16_cycles: nop
+usb_phy_wait_15_cycles: nop
+usb_phy_wait_14_cycles: nop
+usb_phy_wait_13_cycles: nop
+usb_phy_wait_12_cycles: nop
+usb_phy_wait_11_cycles: nop
+usb_phy_wait_10_cycles: nop
+usb_phy_wait_9_cycles:  nop
+usb_phy_wait_8_cycles:  nop
+usb_phy_wait_7_cycles:  nop
+usb_phy_wait_6_cycles:  nop
+usb_phy_wait_5_cycles:  mov pc, lr
+
+
 
 
 
 /*
+ * usbPhyWriteI
  * Register (arguments):
  *   r0: USBPHY
  *   r1: sample buffer
@@ -471,8 +484,6 @@ wpaddr    .req r4   /* Write "address" for D+ line, during normal operation */
 wnaddr    .req r5   /* Write "address" for D- line, during normal operation */
 wtmp1     .req r4
 wtmp2     .req r5
-wtmp3     .req r6   /* NOTE: Only use during setup, before wpmask is loaded */
-wtmp4     .req r7   /* NOTE: Only use during setup, before wnmask is loaded */
 
 /* These must remain unchanged during the whole operation. */
 wpmask    .req r6   /* Write mask for D+ line */
@@ -492,130 +503,33 @@ wdnclrreg .req sp
 .equ wPkt2Num,0x14
 .equ wPkt3,0x18
 .equ wPkt3Num,0x1c
-.equ wSpSize,0x20
+.equ wFirstPkt,0x20
 
-.func usbPhyWrite
-.global usbPhyWrite
-/*int */usbPhyWrite/*(const USBPHY *phy, uint8_t *samples, int count)*/:
-  push {r3,r4,r5,r6,r7,lr}
+.func usbPhyWriteI
+.global usbPhyWriteI
+/*int */usbPhyWriteI/*(const USBPHY *phy)*/:
+  push {r1,r2,r3,r4,r5,r6,r7,lr}
 
-  cmp r2, #11                       // We can only write 11 bytes max.
-  bgt usb_phy_write_too_many_bytes  // Error out if you write more.
-
-  cmp r2, # 0                       // If there are no bytes, return success.
-  beq usb_phy_write_no_bytes
-
-  cmp r2, #8                        // See if we're writing 8-11 bytes.
-  ble usb_phy_write_less_than_8_bytes // If not, try again.
-
-usb_phy_write_8_to_11_bytes:
-
-  mov wtmp1, #32                    // For words 3 and 2, write the full
-  str wtmp1, [wusbphy, #wPkt3Num]   // 32 bits (4 bytes).
-  str wtmp1, [wusbphy, #wPkt2Num]
-
-  mov wtmp1, r2                     // Load number of bytes to write.
-  sub wtmp1, #8                     // Figure out count for last word.
-  lsl wtmp1, #3                     // Convert bytes to bits.
-  str wtmp1, [wusbphy, #wPkt1Num]   // Save this value in pkt1 count.
-
-  mov wtmp1, #3                     // Begin at word 3.
-  mov wpktnum, wtmp1                // Store 3 in the packet number index.
-
-  mov wtmp2, #0                     // Begin loading bytes at the top offset.
-  add wtmp2, r2
-
-  b usb_phy_write_done_with_byte_check
-
-usb_phy_write_too_many_bytes:
-  mov r1, #1
-  mov r0, #0
-  sub r0, r1
-  pop {r3,r4,r5,r6,r7,pc}
-
-usb_phy_write_no_bytes:
-  mov r0, #0
-  sub r0, r1
-  pop {r3,r4,r5,r6,r7,pc}
-
-usb_phy_write_less_than_8_bytes:
-  cmp r2, #4                        // See if we're writing 4-7 bytes.
-  ble usb_phy_write_less_than_4_bytes // If not, try again.
-
-  mov wtmp1, #0                     // Packet 3 will write 0 bits.
-  str wtmp1, [wusbphy, #wPkt3Num]
-
-  mov wtmp1, #32                    // The pkt2 index will send all 32 bits.
-  str wtmp1, [wusbphy, #wPkt2Num]
-
-  mov wtmp1, r2                     // Load the total number of bytes.
-  sub wtmp1, #4                     // Subtract the first 4 bytes, to get
-  lsl wtmp1, #3                     // the residue.  Multiply by 8 to get
-  str wtmp1, [wusbphy, #wPkt1Num]   // the number of bits, and store in pkt1.
-
-  mov wtmp1, #2                     // Start processing at packet #2.
+  ldr wtmp1, [wusbphy, #wFirstPkt]
   mov wpktnum, wtmp1
-
-  mov wtmp2, #4                     // Begin loading bytes into word 2.
-  add wtmp2, r2
-
-  b usb_phy_write_done_with_byte_check
-
-usb_phy_write_less_than_4_bytes:    // We're writing 0-3 bytes.
-
-  mov wtmp1, #0                     // Packets 3 and 2 will process 0 bits.
-  str wtmp1, [wusbphy, #wPkt3Num]
-  str wtmp1, [wusbphy, #wPkt2Num]
-
-  mov wtmp1, r2                     // Load the number of bytes to process,
-  lsl wtmp1, #3                     // convert bits to bytes, and
-  str wtmp1, [wusbphy, #wPkt1Num]   // save it in the packet 1 number.
-
-  mov wtmp1, #1                     // Start processing at packet #1.
-  mov wpktnum, wtmp1
-
-  mov wtmp2, #8                     // Begin loading bytes into word 3.
-  add wtmp2, r2
-  
-usb_phy_write_done_with_byte_check:
-  // We need to reverse the incoming buffer.  Load it backwards onto the
-  // stack, then reverse the bits, and load them into the scratch space
-  // stored in usbphy.
-  mov wtmp4, sp                     // Allocate 12 bytes on the stack.
-  sub wtmp4, #12                    // Store it in an indexable register.
-  mov wtmp1, r2                     // Load in how many bytes to process.
-  sub wtmp1, #1                     // Arrays are 0-indexed, so subtract 1
-  sub wtmp2, #1                     // from the register offset.
-copy_bytes_top:
-  ldrb wtmp3, [r1, wtmp1]           // Load one byte from the input array.
-  strb wtmp3, [wtmp4, wtmp2]        // Put the byte into the stack temp.
-  cmp wtmp1, #0                     // If we did input[0], finish.
-  beq copy_bytes_end                // 
-  sub wtmp2, #1                     // Increment the output pointer.
-  sub wtmp1, #1                     // Decrement the input pointer.
-  b copy_bytes_top
-copy_bytes_end:
-// 0xc480c3
-  ldr wtmp1, [wtmp4, #0]            // Load first chunk of data from sp.
-  mvn wtmp1, wtmp1                  // Invert bytes, to make math work.
-  str wtmp1, [wusbphy, #wPkt3]      // Cache value as packet 1.
-
-  ldr wtmp1, [wtmp4, #4]            // Load first chunk of data from sp.
-  mvn wtmp1, wtmp1                  // Invert bytes, to make math work.
-  str wtmp1, [wusbphy, #wPkt2]      // Cache value as packet 2.
-
-  ldr wtmp1, [wtmp4, #8]            // Load first chunk of data from sp.
-  mvn wtmp1, wtmp1                  // Invert bytes, to make math work.
-  str wtmp1, [wusbphy, #wPkt1]      // Cache value as packet 2.
 
 usb_phy_write_get_first_packet:
   // Read the first packet
-  mov wtmp1, wpktnum                // Read the current packet number.
+  //mov wtmp1, wpktnum                // Read the current packet number.
   lsl wtmp1, #3                     // Multiply the packet number by 3.
-  add wtmp1, wusbphy                // Add it to the start of the usbphy str.
-  ldr wpkt, [wtmp1]                 // Load the value, which is the packet.
-  add wtmp1, #4                     // 4 bytes later, the bits-left comes.
-  ldr wleft, [wtmp1]                // Load the number of bits left.
+  add wtmp1, wusbphy                // Add it to the start of the usbphy struct.
+  ldr wpkt, [wtmp1, #0]             // Load the value, which is the packet.
+  ldr wleft, [wtmp1, #4]            // Load the number of bits left.
+
+  /* Load D+ set and clear registers early on */
+  ldr wtmp1, [wusbphy, #dpSAddr]    // Registers are faster than RAM, and we
+  mov wdpsetreg, wtmp1              // only have two free registers, so pre-
+  ldr wtmp1, [wusbphy, #dpCAddr]    // cache the D+ addresses to save one
+  mov wdpclrreg, wtmp1              // clock cycle.
+
+  /* Set K-state early on, to prevent glitching */
+  mov wpaddr, wdpclrreg             // D+ clr
+  ldr wnaddr, [wusbphy, #dnSAddr]   // D- set
 
   // First, set both lines to OUTPUT
   ldr wtmp1, [wusbphy, #dpDAddr]    // Get the direction address
@@ -640,10 +554,6 @@ usb_phy_write_get_first_packet:
   mov wtmp1, sp
   str wtmp1, [wusbphy, #spSave]
 
-  ldr wtmp1, [wusbphy, #dpSAddr]    // Registers are faster than RAM, and we
-  mov wdpsetreg, wtmp1              // only have two free registers, so pre-
-  ldr wtmp1, [wusbphy, #dpCAddr]    // cache the D+ addresses to save one
-  mov wdpclrreg, wtmp1              // clock cycle.
   ldr wtmp1, [wusbphy, #dnCAddr]    // Cache D- clr as well.
   mov wdnclrreg, wtmp1
 
@@ -655,7 +565,7 @@ usb_phy_write_get_first_packet:
   bl usb_write_state_k
   bl usb_write_state_j
   bl usb_write_state_k
-  bl usb_read_wait_26_cycles        // Hold k state for one more cycle.  Take
+  bl usb_phy_wait_26_cycles         // Hold k state for one more cycle.  Take
                                     // up the slack that would normally
                                     // follow this.
   // end of header //
@@ -693,38 +603,41 @@ usb_phy_write_out:
 
   // 15 cycles total
 
-  mov wtmp1, #0b111111
-  mov wtmp2, wstuff
-  and wtmp2, wtmp1
-  beq usb_phy_write_stuff_bit
+  mov wtmp1, #0b111111              // See if we just wrote "111111"
+  mov wtmp2, wstuff                 // Compare it with the wstuff value
+  and wtmp2, wtmp1                  // AND the two together.  If they're the
+  beq usb_phy_write_stuff_bit       // same, then stuff one bit.
   // 4
 
 usb_phy_write_done_stuffing_bit:
-  sub wleft, wleft, #1
-  bne usb_phy_write_continue_word
+  sub wleft, wleft, #1              // See how many bits we have left to write.
+  bne usb_phy_write_continue_word   // If nonzero, write another bit.
   // 2
 
 usb_phy_write_finished_word:
-  mov wtmp1, wpktnum
-  sub wtmp1, #1
-  mov wpktnum, wtmp1
-  beq usb_write_eof
+  mov wtmp1, wpktnum                // Move wpktnum into a lo reg
+  sub wtmp1, #1                     // Subtract one from the output
+  beq usb_write_eof                 // Exit if it's now 0.
+  mov wpktnum, wtmp1                // ...and store it back in the hi reg.
 
 usb_phy_write_calculate_next_pkt:
-  mov wpkt, wnextpkt
-  lsl wtmp1, #3
-  add wtmp1, #4
-  ldr wleft, [wusbphy, wtmp1]
+  mov wpkt, wnextpkt                // Load the prefetched next packet
+  lsl wtmp1, #3                     // Convert pktnum into 32-bit offset
+  add wtmp1, #4                     // The "bits left" is stored 4 bytes above.
+  ldr wleft, [wusbphy, wtmp1]       // Load the value from the phy data.
   // 8
 
   b usb_phy_write_top
 
+  // Pre-fetch the next packet.  We have some spare cycles here, so load
+  // the next packet into wnextpkt.
 usb_phy_write_continue_word:
-  mov wtmp1, wpktnum
-  sub wtmp1, #1
-  lsl wtmp1, #3
-  ldr wtmp2, [wusbphy, wtmp1]
-  mov wnextpkt, wtmp2
+usb_phy_write_prefetch_next_word:
+  mov wtmp1, wpktnum                // Load the current pktnum (offset)
+  sub wtmp1, #1                     // The next packet will be 1 less.
+  lsl wtmp1, #3                     // Convert pktnum to 32-bit word offsets.
+  ldr wtmp2, [wusbphy, wtmp1]       // Load the packet into wtmp2.
+  mov wnextpkt, wtmp2               // Move the packet into the hi wnextpkg reg.
   .rept 2
   nop
   .endr
@@ -736,7 +649,7 @@ usb_phy_write_stuff_bit:
 // 5 vs 8 cycles
 // The real path is 3 cycles longer
 // There are 2 + 2 + 7 skipped cycles here, too.
-  bl usb_read_wait_13_cycles
+  bl usb_phy_wait_13_cycles
   mov wtmp1, #0b111110              // Clear out the bit-stuff rcounter
   mov wstuff, wtmp1
   // 2
@@ -769,11 +682,10 @@ usb_phy_write_stuff_out:
   .endr
   b usb_phy_write_done_stuffing_bit
 
-
-
 usb_write_eof:
   bl usb_write_state_se0
   bl usb_write_state_se0
+  bl usb_write_state_j
 
   // --- Done Transmitting --- //
 
@@ -797,7 +709,7 @@ usb_write_eof:
   str wtmp2, [wtmp1]                // Set the direction for Dp
 
   mov r0, #0
-  pop {r3,r4,r5,r6,r7,pc}
+  pop {r1,r2,r3,r4,r5,r6,r7,pc}
 
   // Useful functions
 usb_write_state_se0:
@@ -815,205 +727,9 @@ usb_write_state_k:
 usb_phy_write_out_func:
   str wpmask, [wpaddr]
   str wnmask, [wnaddr]
-  b usb_read_wait_24_cycles
+  b usb_phy_wait_24_cycles
 
 .endfunc
-.type usbPhyWrite, %function
-.size usbPhyWrite, .-usbPhyWrite
+.type usbPhyWriteI, %function
+.size usbPhyWriteI, .-usbPhyWriteI
 
-
-tusbphy .req r0
-
-tpaddr  .req r1   /* Write "set-" or "clear-bit" address for D+ line */
-tpmask  .req r2   /* Write mask for D+ line */
-
-tnaddr  .req r3   /* Write "set-" or "clear-bit" address for D- line */
-tnmask  .req r4   /* Write mask for D- line */
-
-treg    .req r5
-tval    .req r6
-
-.func usbPhyWriteTestPattern
-.global usbPhyWriteTestPattern
-usbPhyWriteTestPattern:
-  push {lr}
-
-  /* Set D+ to output */
-  ldr treg, [tusbphy, #dpDAddr]     // Get the direction address
-  ldr tval, [treg]                  // Get the direction value
-  ldr tpmask, [tusbphy, #dpMask]     // Get the mask value for ORing in
-  orr tval, tval, tpmask              // Set the direciton mask
-  str tval, [treg]                  // Set the direction for Dp
-
-  /* Set D- to output */
-  ldr treg, [tusbphy, #dnDAddr]     // Get the direction address
-  ldr tval, [treg]                  // Get the direction value
-  ldr tnmask, [tusbphy, #dnMask]     // Get the mask value for ORing in
-  orr tval, tval, tnmask              // Set the direciton mask
-  ldr treg, [tusbphy, #dnDAddr]     // Get the direction address
-  str tval, [treg]                  // Set the direction for Dp
-
-  ldr tpmask, [r0, #dpMask]
-  ldr tnmask, [r0, #dnMask]
-
-  // usb start-of-frame header //
-  bl usb_write_test_state_k
-  bl usb_write_test_state_j
-  bl usb_write_test_state_k
-  bl usb_write_test_state_j
-  bl usb_write_test_state_k
-  bl usb_write_test_state_j
-  bl usb_write_test_state_k
-  bl usb_write_test_state_k
-  // end of header //
-
-  bl usb_write_test_state_k // 1
-  bl usb_write_test_state_k // 1
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_k // 1
-  bl usb_write_test_state_k // 1
-
-  bl usb_write_test_state_k // 1
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_k // 1
-  bl usb_write_test_state_k // 1
-  bl usb_write_test_state_j // 0
-
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_k // 1
-
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_j // 1
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-
-  bl usb_write_test_state_j // 1
-  bl usb_write_test_state_j // 1
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_k // 1
-  bl usb_write_test_state_k // 1
-  bl usb_write_test_state_k // 1
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_j // 1
-
-  bl usb_write_test_state_j // 1
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_j // 1
-  bl usb_write_test_state_k // 0
-  bl usb_write_test_state_k // 1
-  bl usb_write_test_state_j // 0
-  bl usb_write_test_state_k // 0
-
-  // start of end-of-frame
-  bl usb_write_test_state_se0
-  bl usb_write_test_state_se0
-  // end of end-of-frame
-
-  pop {pc}
-
-  /* These all specify one extra cycle.  If you add up the numbers, you'll
-     find we should sleep for 26 cycles.  However, those names assume you
-     get there via a "bl", which adds an extra cycle over "b" (3 cycles
-     instead of 2.)  Therefore, branch to usb_read_wait_27_cycles instead
-     of usb_read_wait_26_cycles to compensate.
-   */
-usb_write_test_state_se0:
-  ldr tpaddr, [tusbphy, #dpCAddr]    // D+ clr
-  ldr tnaddr, [tusbphy, #dnCAddr]    // D- clr
-  b usb_phy_write_test_out
-usb_write_test_state_j:
-  ldr tpaddr, [tusbphy, #dpSAddr]    // D+ set
-  ldr tnaddr, [tusbphy, #dnCAddr]    // D- clr
-  b usb_phy_write_test_out
-usb_write_test_state_k:
-  ldr tpaddr, [tusbphy, #dpCAddr]    // D+ clr
-  ldr tnaddr, [tusbphy, #dnSAddr]    // D- set
-  nop
-usb_phy_write_test_out:
-  str tpmask, [wpaddr]
-  str tnmask, [wnaddr]
-  b usb_read_wait_23_cycles
-
-.endfunc
-.type usbPhyWriteTestPattern, %function
-.size usbPhyWriteTestPattern, .-usbPhyWriteTestPattern
-
-.func asmtest
-.global asmtest
-asmtest:
-  /*int asmtest(int a1, int a2)*/
-
-  add r1, r1, r0
-  beq asmtest_equal
-  mov r0, #0
-  bx lr
-
-asmtest_equal:
-  mov r0, #1
-  bx lr
-
-.endfunc
-.type asmtest, %function
-.size asmtest, .-asmtest

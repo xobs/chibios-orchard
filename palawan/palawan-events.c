@@ -33,7 +33,7 @@ void usb_state_transition_cb(EXTDriver *extp, expchannel_t channel) {
 
   (void)extp;
   (void)channel;
-  usbStateTransitionI();
+  //usbStateTransitionI();
 }
 
 static const EXTConfig ext_config = {

@@ -22,6 +22,7 @@
 #include "shell.h"
 #include "chprintf.h"
 #include "usbphy.h"
+#include "usbmac.h"
 
 #include "palawan.h"
 #include "palawan-events.h"
@@ -53,11 +54,6 @@ static void shell_termination_handler(eventid_t id) {
   palawanShellRestart();
 }
 
-static void usb_process_incoming(eventid_t id) {
-
-  (void)id;
-//  usbProcessIncoming();
-}
 /*
 static void default_radio_handler(uint8_t type, uint8_t src, uint8_t dst,
                                   uint8_t length, const void *data) {
@@ -118,6 +114,12 @@ static void print_mcu_info(void) {
 int loop_counter = 0;
 int last_ret;
 
+static const char usb_device_descriptor[] = {
+  0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x08,
+  0xCF, 0x1B, 0xCE, 0x05, 0x14, 0xA0, 0x00, 0x02,
+  0x00, 0x01,
+};
+
 extern void usbPhyTime(int, int);
 int main(void)
 {
@@ -137,13 +139,14 @@ int main(void)
   while (1) {
     chSysLock();
     *((volatile uint32_t *)0xf80000cc) = 0x80; /* Toggle green LED */
-    usbPhyWriteTest();
+    usbPhyWriteTest(usbPhyTestPhy());
     chSysUnlock();
-    chThdSleepSeconds(1);
+    chThdSleepMilliseconds(100);
   }
 #endif
 
-  usbInit();
+  usbMacInit(usbMacDefault(), usb_device_descriptor);
+  usbPhyInit(usbPhyDefaultPhy(), usbMacDefault());
 
   palawanEventsStart();
   palawanShellInit();
@@ -155,7 +158,6 @@ int main(void)
   spiStart(&SPID2, &spi_config);
 
   evtTableHook(palawan_events, shell_terminated, shell_termination_handler);
-  evtTableHook(palawan_events, usb_phy_data_available, usb_process_incoming);
 
   palawanShellRestart();
 

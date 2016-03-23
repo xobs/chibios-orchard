@@ -3,28 +3,12 @@
 #include "chprintf.h"
 
 #include "usbphy.h"
+#include "usbmac.h"
 #include "palawan-shell.h"
 #include "hex.h"
 #include "string.h"
 
-struct USBPHY {
-  uint32_t padding[2];
-  uint32_t scratch[6];
-  volatile uint32_t *usbdpIAddr;
-  volatile uint32_t *usbdpSAddr;
-  volatile uint32_t *usbdpCAddr;
-  volatile uint32_t *usbdpDAddr;
-  uint32_t usbdpMask;
-  uint32_t usbdpShift;
-
-  volatile uint32_t *usbdnIAddr;
-  volatile uint32_t *usbdnSAddr;
-  volatile uint32_t *usbdnCAddr;
-  volatile uint32_t *usbdnDAddr;
-  uint32_t usbdnMask;
-  uint32_t usbdnShift;
-} __attribute__((packed, aligned(4)));
-
+#if 0
 enum state {
   state_se0,
   state_j,
@@ -32,7 +16,7 @@ enum state {
   state_se1,
 };
 
-static struct USBPHY usbPhy = {
+static struct USBPHY test_phy = {
   /* PTB0 */
   .usbdpIAddr = &FGPIOB->PDIR,
   .usbdpSAddr = &FGPIOB->PSOR,
@@ -49,6 +33,28 @@ static struct USBPHY usbPhy = {
   .usbdnMask = (1 << 4),
   .usbdnShift = 4,
 };
+
+static struct USBMAC test_mac;
+
+#if 0
+static struct USBPHY testWriteUsbPhy = {
+  /* PTE0 */
+  .usbdpIAddr = &FGPIOE->PDIR,
+  .usbdpSAddr = &FGPIOE->PSOR,
+  .usbdpCAddr = &FGPIOE->PCOR,
+  .usbdpDAddr = &FGPIOE->PDDR,
+  .usbdpMask = (1 << 0),
+  .usbdpShift = 0,
+
+  /* PTE1 */
+  .usbdnIAddr = &FGPIOE->PDIR,
+  .usbdnSAddr = &FGPIOE->PSOR,
+  .usbdnCAddr = &FGPIOE->PCOR,
+  .usbdnDAddr = &FGPIOE->PDDR,
+  .usbdnMask = (1 << 1),
+  .usbdnShift = 1,
+};
+#endif
 
 static uint8_t test_setup0_setup[] = {0x2D, 0x00, 0x10};
 static uint8_t test_setup0_data[] = {0xC3, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, 0xDD, 0x94};
@@ -169,6 +175,11 @@ static void cmd_usbphy(BaseSequentialStream *chp, int argc, char *argv[])
   uint8_t *test_data;
   uint32_t test_size;
 
+  if (!usbPhyInitialized(&test_phy)) {
+    usbMacInit(&test_mac);
+    usbPhyInit(&test_phy, &test_mac);
+  }
+
   if (argc > 0) {
     if (argv[0][0] == 'd') {
       test_data = test_setup0_data;
@@ -227,7 +238,7 @@ static void cmd_usbphy(BaseSequentialStream *chp, int argc, char *argv[])
   chprintf(chp, "Testing packet\r\n");
   asmtest(chp);
 
-  packet_bits = usb_test_to_buffer(&usbPhy, test_data, test_size);
+  packet_bits = usb_test_to_buffer(&test_phy, test_data, test_size);
   chprintf(chp, "Packet to test is %d bytes, which expands to %d bits.\r\n",
                 test_size, packet_bits);
 
@@ -254,10 +265,10 @@ static void cmd_usbphy(BaseSequentialStream *chp, int argc, char *argv[])
     chprintf(chp, "\r\n");
   }
 
-  uint32_t start = (uint32_t)usbPhy.usbdpIAddr;
+  uint32_t start = (uint32_t)test_phy.usbdpIAddr;
   memset(buffer, 0, sizeof(buffer));
-  ret = usbPhyRead(&usbPhy, buffer);
-  uint32_t end = (uint32_t)usbPhy.usbdpIAddr;
+  ret = usbPhyRead(&test_phy, buffer);
+  uint32_t end = (uint32_t)test_phy.usbdpIAddr;
 
   chprintf(chp, "usbPhyRead() returned %d, read %d bits\r\n",
                 ret, (end - start)/ 4);
@@ -269,4 +280,29 @@ static void cmd_usbphy(BaseSequentialStream *chp, int argc, char *argv[])
   print_hex(chp, buffer, sizeof(buffer));
 }
 
-palawan_command("usbphy", cmd_usbphy);
+palawan_command("phy", cmd_usbphy);
+#endif
+
+static void cmd_usbattach(BaseSequentialStream *chp, int argc, char *argv[])
+{
+  (void)argc;
+  (void)argv;
+
+  chprintf(chp, "Attaching USB device... ");
+  usbPhyAttach(usbPhyDefaultPhy());
+  chprintf(chp, "Done.\r\n");
+}
+
+palawan_command("attach", cmd_usbattach);
+
+static void cmd_usbdetach(BaseSequentialStream *chp, int argc, char *argv[])
+{
+  (void)argc;
+  (void)argv;
+
+  chprintf(chp, "Detaching USB device... ");
+  usbPhyDetach(usbPhyDefaultPhy());
+  chprintf(chp, "Done.\r\n");
+}
+
+palawan_command("detach", cmd_usbdetach);

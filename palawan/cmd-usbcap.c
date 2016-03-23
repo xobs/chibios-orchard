@@ -1,3 +1,4 @@
+#if 0
 /*
     ChibiOS/RT - Copyright (C) 2006-2013 Giovanni Di Sirio
 
@@ -20,23 +21,53 @@
 
 #include "palawan-shell.h"
 #include "usbphy.h"
+#include "usbmac.h"
 
-extern void cmd_usbmac(BaseSequentialStream *chp, int argc, char *argv[]);
+extern void cmd_usbmac_print(BaseSequentialStream *chp, struct USBMAC *mac);
+
+static struct USBPHY test_phy = {
+  /* Pins J21 and J19 */
+  /* PTD5 */
+  .usbdpIAddr = &FGPIOD->PDIR,
+  .usbdpSAddr = &FGPIOD->PSOR,
+  .usbdpCAddr = &FGPIOD->PCOR,
+  .usbdpDAddr = &FGPIOD->PDDR,
+  .usbdpMask  = (1 << 5),
+  .usbdpShift = 5,
+
+  /* PTD6 */
+  .usbdnIAddr = &FGPIOD->PDIR,
+  .usbdnSAddr = &FGPIOD->PSOR,
+  .usbdnCAddr = &FGPIOD->PCOR,
+  .usbdnDAddr = &FGPIOD->PDDR,
+  .usbdnMask  = (1 << 6),
+  .usbdnShift = 6,
+};
+
+static struct USBMAC test_mac;
 
 void cmd_usbcap(BaseSequentialStream *chp, int argc, char *argv[])
 {
-  uint8_t samples[11];
+
+  (void)argc;
+  (void)argv;
+
+  if (!usbPhyInitialized(&test_phy)) {
+    usbMacInit(&test_mac);
+    usbPhyInit(&test_phy, &test_mac);
+  }
 
   chprintf(chp, "Waiting for sample...");
   chSysLock();
   while (!(FGPIOD->PDIR & (1 << 5))) {
     ;
   }
-  usbCaptureTest(samples);
+  usbCapture(&test_phy);
   chSysUnlock();
   chprintf(chp, " Done.\r\n");
 
-  cmd_usbmac(chp, argc, argv);
+  cmd_usbmac_print(chp, &test_mac);
 }
 
 palawan_command("usbcap", cmd_usbcap);
+#endif

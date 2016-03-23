@@ -6,39 +6,37 @@
 #include "usbmac.h"
 #include "palawan.h"
 
-#define BIT_BUFFER_SIZE 0 + \
-    + 8             /* Sync */                          \
-    + 8             /* PID */                           \
-    + (8 * 8)       /* Data */                          \
-    + 16            /* CRC16 */                         \
-    + 2             /* SE0 End-of-packet */             \
-    + 8             /* Extra padding (unnecessary?) */
-#define MAX_SEND_QUEUES 16
-#define MAX_SEND_QUEUES_MASK 0xf
+uint32_t stats_timestamps[512];
+uint32_t *stats_timestamps_ptr = stats_timestamps;
+uint32_t stats_counter;
 
-/* Outgoing queues */
-static uint8_t send_queues[MAX_SEND_QUEUES][BIT_BUFFER_SIZE];
-static uint8_t send_queue_sizes[MAX_SEND_QUEUES];
-static uint8_t send_queue_write_head;
-static uint8_t send_queue_read_head;
+#define ADD_EVENT(phy, byte, tag) \
+    *stats_timestamps_ptr++ = ((byte & 0xff) << 24) \
+                            | ((tag & 0xff) << 16) \
+                            | (SysTick->VAL & 0xffff);
+/*
+#define ADD_EVENT(phy, byte, tag) \
+  do { \
+    phy->stats.timestamps[phy->stats.timestamp_count++] = ((byte & 0xff) << 24) \
+                                                        | ((tag & 0xff) << 16) \
+                                                        | (SysTick->VAL & 0xffff); \
+    phy->stats.timestamp_count &= phy->stats.timestamp_mask; \
+  } while(0);
+*/
+#define WR_EVENT_START 1
+#define WR_EVENT_END 2
+#define RD_EVENT_START 3
+#define RD_EVENT_END 4
+#define INSERT_EVENT_START 5
+#define INSERT_EVENT_END 6
+#define IRQ_EVENT_START 7
+#define IRQ_EVENT_END 8
 
-static int usb_initialized;
-event_source_t usb_phy_data_available;
-static thread_reference_t usb_thread;
-
-static int stats_errors;
-static int stats_overflow;
-static int stats_timeout;
-static int stats_num_packets;
-static int stats_no_end_of_sync;
-static int stats_no_end_of_frame;
-uint32_t stats_timestamps[256];
-uint32_t stats_timestamps_offset;
-#define stats_timestamps_offset_mask 0xff
 
 #define USB_FS_RATE 12000000 /* 12 MHz */
 #define USB_LS_RATE (USB_FS_RATE / 8) /* 1.5 MHz */
 
+/* We need to reverse bits.  Use a 256-byte lookup table to speed things up. */
 const uint8_t bit_reverse_table_256[] = {
 #define R2(n)     n,     n + 2*64,     n + 1*64,     n + 3*64
 #define R4(n) R2(n), R2(n + 2*16), R2(n + 1*16), R2(n + 3*16)
@@ -49,34 +47,7 @@ const uint8_t bit_reverse_table_256[] = {
 #undef R6
 };
 
-struct USBPHY {
-  uint32_t padding[2];
-  uint32_t scratch[6];
-  volatile void *usbdpIAddr;
-  volatile void *usbdpSAddr;
-  volatile void *usbdpCAddr;
-  volatile void *usbdpDAddr;
-  uint32_t usbdpShift;
-
-  volatile void *usbdnIAddr;
-  volatile void *usbdnSAddr;
-  volatile void *usbdnCAddr;
-  volatile void *usbdnDAddr;
-  uint32_t usbdnShift;
-
-  uint32_t usbdpMask;
-  uint32_t usbdnMask;
-} __attribute__((packed));
-
-enum state {
-  state_se0,
-  state_k,
-  state_j,
-  state_se1,
-};
-
-//#define USB_PHY_LL_DEBUG
-static struct USBPHY usbPhyPins = {
+static struct USBPHY defaultUsbPhy = {
   /* PTB0 */
   .usbdpIAddr = &FGPIOB->PDIR,
   .usbdpSAddr = &FGPIOB->PSOR,
@@ -94,26 +65,7 @@ static struct USBPHY usbPhyPins = {
   .usbdnShift = 4,
 };
 
-static struct USBPHY usbPhyTestPins = {
-  /* Pins J21 and J19 */
-  /* PTD5 */
-  .usbdpIAddr = &FGPIOD->PDIR,
-  .usbdpSAddr = &FGPIOD->PSOR,
-  .usbdpCAddr = &FGPIOD->PCOR,
-  .usbdpDAddr = &FGPIOD->PDDR,
-  .usbdpMask  = (1 << 5),
-  .usbdpShift = 5,
-
-  /* PTD6 */
-  .usbdnIAddr = &FGPIOD->PDIR,
-  .usbdnSAddr = &FGPIOD->PSOR,
-  .usbdnCAddr = &FGPIOD->PCOR,
-  .usbdnDAddr = &FGPIOD->PDDR,
-  .usbdnMask  = (1 << 6),
-  .usbdnShift = 6,
-};
-
-static struct USBPHY usbPhyTestPatternPins = {
+static struct USBPHY testWriteUsbPhy = {
   /* PTE0 */
   .usbdpIAddr = &FGPIOE->PDIR,
   .usbdpSAddr = &FGPIOE->PSOR,
@@ -131,99 +83,90 @@ static struct USBPHY usbPhyTestPatternPins = {
   .usbdnShift = 1,
 };
 
-int usbPhyResetStatistics(void) {
-  stats_errors = 0;
-  stats_num_packets = 0;
-  stats_overflow = 0;
-  stats_timeout = 0;
-  stats_no_end_of_sync = 0;
-  stats_no_end_of_frame = 0;
-  stats_timestamps_offset = 0;
+int usbPhyResetStatistics(struct USBPHY *phy) {
+  memset(&phy->stats, 0, sizeof(phy->stats));
+  phy->stats.out_buffer_size = MAX_SEND_QUEUES;
+//  phy->stats.timestamp_mask = 0x1ff;
   return 0;
 }
 
-void usbPhyGetStatistics(struct usb_phy_statistics *stats) {
-  stats->num_packets = stats_num_packets;
-  stats->errors = stats_errors;
-  stats->overflow = stats_overflow;
-  stats->timeout = stats_timeout;
-  stats->no_end_of_sync = stats_no_end_of_sync;
-  stats->no_end_of_frame = stats_no_end_of_frame;
-  stats->out_read_head = send_queue_read_head;
-  stats->out_write_head = send_queue_write_head;
-  stats->out_buffer_size = MAX_SEND_QUEUES;
-  stats->timestamps = stats_timestamps;
-  stats->timestamp_count = stats_timestamps_offset;
+const struct usb_phy_statistics *usbPhyGetStatistics(struct USBPHY *phy) {
+  return &phy->stats;
 }
 
-int usbPhyQueue(const uint8_t *buffer, int buffer_size) {
+int usbPhyInitialized(struct USBPHY *phy) {
+  if (!phy)
+    return 0;
 
-  send_queue_sizes[send_queue_write_head] = buffer_size;
-  memcpy(send_queues[send_queue_write_head], buffer, buffer_size);
-  send_queue_write_head = (send_queue_write_head + 1) & MAX_SEND_QUEUES_MASK;
+  return phy->initialized;
+}
+
+int usbPhyQueue(struct USBPHY *phy, const uint8_t *buffer, int buffer_size) {
+
+  phy->queue_sizes[phy->write_head] = buffer_size;
+  memcpy(phy->queues[phy->write_head], buffer, buffer_size);
+  phy->write_head = (phy->write_head + 1) & MAX_SEND_QUEUES_MASK;
+
+  /* Wake up the USB writing thread to actually send the data out */
   osalSysLock();
-  osalThreadResumeI(&usb_thread, MSG_OK);
+  osalThreadResumeI(&defaultUsbPhy.thread, MSG_OK);
   osalSysUnlock();
   return 0;
 }
 
-int usbCaptureTest(uint8_t samples[11]) {
+static int is_interesting;
+int usbCaptureI(struct USBPHY *phy) {
   int bytes_read;
+  uint8_t samples[12];
+  int ret;
+  int capture_tries = 0;
 
   /* Toggle the green LED */
   *((volatile uint32_t *)0xf80000cc) = 0x80;
 
-  bytes_read = usbPhyRead(&usbPhyTestPins, samples);
+capture_again:
 
-  if (bytes_read < 0) {
+  ADD_EVENT(phy, capture_tries, RD_EVENT_START);
+  bytes_read = usbPhyReadI(phy, samples);
+  ADD_EVENT(phy, bytes_read, RD_EVENT_END);
+
+  /* If we've got more captures to try, try again */
+  if ((bytes_read < 0) && (capture_tries --> 0))
+      goto capture_again;
+
+  if (bytes_read <= 0) {
     if (bytes_read == -1)
-      stats_timeout++;
+      phy->stats.timeout++;
+
     else if (bytes_read == -2)
-      stats_overflow++;
+      phy->stats.overflow++;
+
+    else if (bytes_read == 0)
+      phy->stats.empty++;
+
+    /* No end-of-sync can be returned when we're mis-aligned */
     else if (bytes_read == -3)
-      stats_no_end_of_sync++;
+      phy->stats.no_end_of_sync++;
+
     else
-      stats_errors++;
+      phy->stats.errors++;
     goto err;
   }
-  stats_num_packets++;
 
-  //stats_timestamps[stats_timestamps_offset++] = 0x00010000 | SysTick->VAL;
-  //stats_timestamps_offset &= stats_timestamps_offset_mask;
-  usbMacInsert(samples, bytes_read);
+  ADD_EVENT(phy, samples[bytes_read - 1], INSERT_EVENT_START);
+  ret = usbMacInsertI(phy->mac, samples, bytes_read);
+  ADD_EVENT(phy, ret, INSERT_EVENT_END);
+  is_interesting = 1;
 
-  return bytes_read;
-
-err:
-  return -1;
-}
-
-int usbCapture(uint8_t samples[11]) {
-  int bytes_read;
-
-  /* Toggle the green LED */
-  *((volatile uint32_t *)0xf80000cc) = 0x80;
-
-  bytes_read = usbPhyRead(&usbPhyPins, samples);
-
-  if (bytes_read < 0) {
-    if (bytes_read == -1)
-      stats_timeout++;
-    else if (bytes_read == -2)
-      stats_overflow++;
-    else if (bytes_read == -3)
-      stats_no_end_of_sync++;
-    else
-      stats_errors++;
-    goto err;
+  /* If the Insert operation has indicated we're to expect another packet,
+   * capture another packet.
+   */
+  if (!ret) {
+    capture_tries = 10;
+    goto capture_again;
   }
-  stats_num_packets++;
 
-  //stats_timestamps[stats_timestamps_offset++] = 0x00010000 | SysTick->VAL;
-  //stats_timestamps_offset &= stats_timestamps_offset_mask;
-  usbMacInsert(samples, bytes_read);
-
-  return bytes_read;
+  return ret;
 
 err:
   return -1;
@@ -238,74 +181,169 @@ err:
  * This is because standard ChibiOS IRQ housekeeping adds too much overhead
  * to this process, and we need to respond as quickly as possible.
  */
-void usbStateTransitionI(void) {
+static void usbStateTransitionI(void) {
 
-  uint8_t samples[11];
-  int bytes_read;
+  int ret;
+  struct USBPHY *phy = &defaultUsbPhy;
+  is_interesting = 0;
 
-  bytes_read = usbCapture(samples);
+  ADD_EVENT(phy, 0, IRQ_EVENT_START);
 
-  return;
-
-err:
-  ;
   OSAL_IRQ_PROLOGUE();
-  ;
+  osalSysLockFromISR();
+  ret = usbCaptureI(&defaultUsbPhy);
+  if (ret >= 0 && phy->initialized)
+    osalThreadResumeI(&phy->thread, MSG_OK);
+  osalSysUnlockFromISR();
   OSAL_IRQ_EPILOGUE();
+
+  ADD_EVENT(phy, ret, IRQ_EVENT_END);
+
+  if (!is_interesting)
+    stats_timestamps_ptr -= 4;
   return;
 }
 
-int usbPhyWriteDirect(const uint8_t *buffer, int size) {
-  //stats_timestamps[stats_timestamps_offset++] = 0x00020000 | SysTick->VAL;
-  //stats_timestamps_offset &= stats_timestamps_offset_mask;
-  return usbPhyWrite(&usbPhyPins, buffer, size);
+static uint32_t bit_num_lut[12][7] = {
+  {  0,  0,  0,   0,   0, 0, 0 },
+
+  {  8,  0,  0,   1,   0, 0, 0 },
+  { 16,  0,  0,   1,   0, 0, 0 },
+  { 24,  0,  0,   1,   0, 0, 0 },
+  { 32,  0,  0,   1,   0, 0, 0 },
+
+  {  8, 32,  0,   2,   1, 0, 0 },
+  { 16, 32,  0,   2,   1, 0, 0 },
+  { 24, 32,  0,   2,   1, 0, 0 },
+  { 32, 32,  0,   2,   1, 0, 0 },
+
+  {  8, 32, 32,   3,   2, 1, 0 },
+  { 16, 32, 32,   3,   2, 1, 0 },
+  { 24, 32, 32,   3,   2, 1, 0 },
+};
+
+/* Expose the "rev" instruction to C */
+#ifdef REVERSE_BITS
+static inline __attribute__((always_inline)) uint32_t __rev(uint32_t val) {
+  asm("rev %0, %1" : "=r" (val) : "r" (val) );
+  return val;
+}
+#else /* Don't reverse bits */
+#define __rev(x) x
+#endif
+
+int usb_phy_write_prepare(union USBPHYInternalData *internal,
+                                 const uint32_t buffer[3],
+                                 int size) {
+
+  uint32_t *num_bits = bit_num_lut[size];
+  uint32_t *scratch = internal->scratch;
+
+  /* Copy the number of bits in each slot from the LUT. */
+  scratch[1] = *num_bits++;
+  scratch[3] = *num_bits++;
+  scratch[5] = *num_bits++;
+
+  /* Copy the initial packet number over */
+  scratch[6] = *num_bits++;
+
+  /* Copy the actual words over, and invert them */
+  scratch[0] = __rev(~buffer[*num_bits++]);
+  scratch[2] = __rev(~buffer[*num_bits++]);
+  scratch[4] = __rev(~buffer[*num_bits++]);
+  
+  return 0;
 }
 
-static int test_num = 0;
-void usbPhyWriteTest(void) {
+int usbPhyWriteDirectI(struct USBPHY *phy, const uint8_t buffer[12], int size) {
+  ADD_EVENT(phy, buffer[0], WR_EVENT_START);
+  usb_phy_write_prepare(&phy->internalData, buffer, size);
+  int ret = usbPhyWriteI(phy);
+  ADD_EVENT(phy, ret, WR_EVENT_END);
+  return ret;
+}
+
+void usbPhyWriteTest(struct USBPHY *phy) {
+
   uint8_t buffer[] = {
 //    0xC3, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, 0xDD, 0x94,
 //    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-//    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+//    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
 //    0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 
 //    0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
-//    0xc3, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xaa, 0x55,
-    0xd2
+    0xc3, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xaa, 0x55,
+//    0xd2
   };
-  usbPhyWrite(&usbPhyTestPatternPins, buffer, sizeof(buffer));
-  test_num++;
-  if (test_num > 10)
-    test_num = 0;
-  //usbPhyWriteTestPattern(&usbPhyTestPatternPins);
+  static uint32_t test_num = sizeof(buffer);
+
+  usb_phy_write_prepare(&phy->internalData, buffer, test_num);
+  usbPhyWriteI(phy);
+
+//  test_num++;
+//  if (test_num > sizeof(buffer))
+//    test_num = 1;
 }
 
-static THD_WORKING_AREA(waUsbBusyPollThread, 256);
 static THD_FUNCTION(usb_busy_poll_thread, arg) {
 
-  (void)arg;
+  struct USBPHY *phy = arg;
 
   chRegSetThreadName("USB poll thread");
   while (1) {
     osalSysLock();
-    (void) osalThreadSuspendS(&usb_thread);
+    (void) osalThreadSuspendS(&phy->thread);
     osalSysUnlock();
 
-    if (usb_initialized)
-      chEvtBroadcast(&usb_phy_data_available);
+    usbMacProcess(phy->mac);
+    if (phy->initialized)
+      chEvtBroadcast(&phy->data_available);
   }
 
   return;
 }
 
-void usbInit(void) {
-  chEvtObjectInit(&usb_phy_data_available);
-  usb_initialized = 1;
-  chThdCreateStatic(waUsbBusyPollThread, sizeof(waUsbBusyPollThread),
-                    LOWPRIO, usb_busy_poll_thread, NULL);
+void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac) {
+
+  phy->mac = mac;
+  usbMacSetPhy(mac, phy);
+  chEvtObjectInit(&phy->data_available);
+  phy->initialized = 1;
+  usbPhyDetach(phy);
+  usbPhyResetStatistics(phy);
+  chThdCreateStatic(phy->waThread, sizeof(phy->waThread),
+                    HIGHPRIO, usb_busy_poll_thread, phy);
+}
+
+struct USBPHY *usbPhyDefaultPhy(void) {
+
+  return &defaultUsbPhy;
+}
+
+struct USBPHY *usbPhyTestPhy(void) {
+
+  return &testWriteUsbPhy;
 }
 
 OSAL_IRQ_HANDLER(KINETIS_PORTA_IRQ_VECTOR) {
   /* Clear all pending interrupts on this port. */
-  PORTA->ISFR = 0xFFFFFFFF;
   usbStateTransitionI();
+  PORTA->ISFR = 0xFFFFFFFF;
+}
+
+void usbPhyDetach(struct USBPHY *phy) {
+
+  /* Set both lines to 0 (clear both D+ and D-) */
+  *(phy->usbdpCAddr) = phy->usbdpMask;
+  *(phy->usbdnCAddr) = phy->usbdnMask;
+
+  /* Set both lines to output */
+  *(phy->usbdpDAddr) |= phy->usbdpMask;
+  *(phy->usbdnDAddr) |= phy->usbdnMask;
+}
+
+void usbPhyAttach(struct USBPHY *phy) {
+
+  /* Set both lines to input */
+  *(phy->usbdpDAddr) &= ~phy->usbdpMask;
+  *(phy->usbdnDAddr) &= ~phy->usbdnMask;
 }

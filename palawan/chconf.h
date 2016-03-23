@@ -59,6 +59,14 @@
  */
 #define CH_CFG_ST_TIMEDELTA                 0
 
+/**
+ * @brief   Whether to use standard NMI systick, or an alternate method
+ * @note    If this value is TRUE, then NMI will be available for use
+ *          in other contexts.  If it's FALSE (or undefined), then the
+ *          standard NMI-based context switch mechanism is used.
+ */
+#define CORTEX_ALTERNATE_SWITCH             FALSE
+
 /** @} */
 
 /*===========================================================================*/
@@ -334,7 +342,7 @@
  *
  * @note    The default is @p FALSE.
  */
-#define CH_DBG_SYSTEM_STATE_CHECK           TRUE
+#define CH_DBG_SYSTEM_STATE_CHECK           FALSE
 
 /**
  * @brief   Debug option, parameters checks.
@@ -343,7 +351,7 @@
  *
  * @note    The default is @p FALSE.
  */
-#define CH_DBG_ENABLE_CHECKS                TRUE
+#define CH_DBG_ENABLE_CHECKS                FALSE
 
 /**
  * @brief   Debug option, consistency checks.
@@ -362,7 +370,7 @@
  *
  * @note    The default is @p FALSE.
  */
-#define CH_DBG_ENABLE_TRACE                 TRUE
+#define CH_DBG_ENABLE_TRACE                 FALSE
 
 /**
  * @brief   Debug option, stack checks.

@@ -7,6 +7,10 @@
 
 static struct USBMAC default_mac;
 
+/* Pre-processed internal data structures for fast responses */
+static struct USBPHYInternalData phyAck;
+static struct USBPHYInternalData phyNak;
+
 static const uint8_t crc5Table4[] =
 {
   0x00, 0x0E, 0x1C, 0x12, 0x11, 0x1F, 0x0D, 0x03,
@@ -116,13 +120,11 @@ const struct usb_mac_statistics *usbMacGetStatistics(struct USBMAC *mac) {
 }
 
 static void usb_send_ack_i(struct USBMAC *mac) {
-    uint8_t ak = USB_PID_ACK;
-    usbPhyWriteDirectI(mac->phy, &ak, 1);
+    usbPhyWritePreparedI(mac->phy, &phyAck);
 }
 
 static void usb_send_nak_i(struct USBMAC *mac) {
-    uint8_t ak = USB_PID_NAK;
-    usbPhyWriteDirectI(mac->phy, &ak, 1);
+    usbPhyWritePreparedI(mac->phy, &phyNak);
 }
 
 static void usb_send_data_i(struct USBMAC *mac) {
@@ -168,12 +170,12 @@ static int usb_copy_data(struct USBMAC *mac, uint8_t *data, unsigned int size) {
 
 extern const uint8_t bit_reverse_table_256[];
 
-int usbMacInsertI(struct USBMAC *mac, uint8_t *temp_packet, int packet_size) {
+int usbMacInsertRevI(struct USBMAC *mac, uint8_t *temp_packet, int size) {
 
   /* Figure out if the packet we're processing is valid, and if we expect
    * more data to follow.
    */
-  switch (temp_packet[packet_size - 1]) {
+  switch (temp_packet[size - 1]) {
     case USB_DIP_IN:
       mac->is_rx = 0; /* This packet will transmit data */
 
@@ -193,7 +195,7 @@ int usbMacInsertI(struct USBMAC *mac, uint8_t *temp_packet, int packet_size) {
       /* Always ack data packets (ignoring crc, but oh well) */
       usb_send_ack_i(mac);
 
-      if (usb_copy_data(mac, temp_packet + 1, packet_size - 3)) {
+      if (usb_copy_data(mac, temp_packet + 1, size - 3)) {
         /* Indicate there's an overflow error */
         mac->stats.overflow++;
         return -1;
@@ -387,10 +389,18 @@ int usbMacProcess(struct USBMAC *mac) {
 
 void usbMacInit(struct USBMAC *mac, const char *usb_descriptor) {
 
+  uint32_t buffer[3];
+
   usbMacResetStatistics(mac);
   mac->descriptor = usb_descriptor;
   mac->data_out = NULL;
   mac->data_out_left = 0;
+
+  buffer[0] = USB_DIP_ACK;
+  usbPhyWritePrepare(&phyAck, buffer, 1);
+
+  buffer[0] = USB_DIP_NAK;
+  usbPhyWritePrepare(&phyNak, buffer, 1);
 }
 
 void usbMacSetPhy(struct USBMAC *mac, struct USBPHY *phy) {

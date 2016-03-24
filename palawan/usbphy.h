@@ -30,26 +30,31 @@ struct usb_phy_statistics {
 #define MAX_SEND_QUEUES_MASK 0xf
 #endif
 
-union USBPHYInternalData {
-  uint32_t scratch[7];    /* Scratch buffer, as used by usb reader/writer */
-  struct {
-    uint8_t data1[4];     /* Actual data of the first word */
-    uint32_t bits1;       /* Number of bits in the first word */
-    uint8_t data2[4];     /* Actual data of the second word */
-    uint32_t bits2;       /* Number of bits in the third word */
-    uint8_t data3[4];     /* Actual data of the third word */
-    uint32_t bits3;       /* Number of bits in the third word */
-    uint32_t first_word;  /* Which word to start with (1, 2, or 3) */
+struct USBPHYInternalData {
+  uint32_t padding[2];
+  union {
+    uint32_t scratch[7];    /* Scratch buffer, as used by usb reader/writer */
+    struct {
+      uint8_t data1[4];     /* Actual data of the first word */
+      uint32_t bits1;       /* Number of bits in the first word */
+      uint8_t data2[4];     /* Actual data of the second word */
+      uint32_t bits2;       /* Number of bits in the third word */
+      uint8_t data3[4];     /* Actual data of the third word */
+      uint32_t bits3;       /* Number of bits in the third word */
+      uint32_t first_word;  /* Which word to start with (1, 2, or 3) */
+    };
   };
 };
 
+/* Make sure this struct is not in flash.  Reads from flash are non-
+ * -deterministic, and can have a variable amount of delay.  Also, make
+ * sure it's not declared "const", as the "spSave" field is written by
+ * the reader code.
+ */
 struct USBPHY {
 
   struct USBMAC *mac;     /* Pointer to the associated MAC */
   int initialized;
-
-  /* This union must be located 8 bytes from the start of the struct */
-  union USBPHYInternalData internalData;
 
   /* USB D+ pin specification */
   volatile uint32_t *usbdpIAddr;
@@ -68,6 +73,8 @@ struct USBPHY {
   uint32_t usbdpMask;
   uint32_t usbdnMask;
 
+  uint32_t spSave;  /* The stack pointer is stored here during reading */
+
   struct usb_phy_statistics stats;
   uint32_t write_head;
   uint32_t read_head;
@@ -85,7 +92,7 @@ int usbPhyResetStatistics(struct USBPHY *phy);
 
 void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac);
 int usbPhyReadI(const struct USBPHY *phy, uint8_t samples[12]);
-int usbPhyWriteI(const struct USBPHY *phy);
+int usbPhyWriteI(const struct USBPHY *phy, struct USBPHYInternalData *data);
 void usbPhyWriteTestPattern(const struct USBPHY *phy);
 void usbPhyWriteTest(struct USBPHY *phy);
 int usbProcessIncoming(struct USBPHY *phy);
@@ -93,6 +100,11 @@ int usbPhyQueue(struct USBPHY *phy, const uint8_t *buffer, int buffer_size);
 int usbCapture(struct USBPHY *phy);
 int usbPhyInitialized(struct USBPHY *phy);
 int usbPhyWriteDirectI(struct USBPHY *phy, const uint8_t buffer[12], int size);
+int usbPhyWritePreparedI(struct USBPHY *phy,
+                         struct USBPHYInternalData *data);
+int usbPhyWritePrepare(struct USBPHYInternalData *data,
+                       const uint32_t buffer[3],
+                       int size);
 
 void usbPhyAttach(struct USBPHY *phy);
 void usbPhyDetach(struct USBPHY *phy);

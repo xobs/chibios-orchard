@@ -141,7 +141,7 @@ int main(void)
     *((volatile uint32_t *)0xf80000cc) = 0x80; /* Toggle green LED */
     usbPhyWriteTest(usbPhyTestPhy());
     chSysUnlock();
-    chThdSleepMilliseconds(100);
+    chThdSleepMilliseconds(1000);
   }
 #endif
 

@@ -105,7 +105,7 @@ int usbMacResetStatistics(struct USBMAC *mac);
    the SoC must be able to quickly respond.  In these cases, it is inadvisable
    to switch threads.
  */
-int usbMacInsertI(struct USBMAC *, uint8_t *incoming_packet, int packet_size);
+int usbMacInsertRevI(struct USBMAC *, uint8_t *incoming_packet, int size);
 
 /* Get the next available USB packet, or NULL if none available */
 const struct usb_packet *usbMacGetPacket(struct USBMAC *mac);

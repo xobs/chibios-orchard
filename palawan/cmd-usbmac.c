@@ -30,6 +30,8 @@ static const char *event_names[] = {
   "INSERT_EVENT_END",
   "IRQ_EVENT_START",
   "IRQ_EVENT_END",
+  "WRPREP_EVENT_START",
+  "WRPREP_EVENT_END",
 };
 
 

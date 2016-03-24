@@ -42,22 +42,22 @@
 #endif
 
 /* [r|w]usbphy offsets */
-.equ dpIAddr,0x24
-.equ dpSAddr,0x28
-.equ dpCAddr,0x2c
-.equ dpDAddr,0x30
-.equ dpShift,0x34
+.equ dpIAddr,0x08
+.equ dpSAddr,0x0c
+.equ dpCAddr,0x10
+.equ dpDAddr,0x14
+.equ dpShift,0x18
 
-.equ dnIAddr,0x38
-.equ dnSAddr,0x3c
-.equ dnCAddr,0x40
-.equ dnDAddr,0x44
-.equ dnShift,0x48
+.equ dnIAddr,0x1c
+.equ dnSAddr,0x20
+.equ dnCAddr,0x24
+.equ dnDAddr,0x28
+.equ dnShift,0x2c
 
-.equ dpMask,0x4c
-.equ dnMask,0x50
+.equ dpMask,0x30
+.equ dnMask,0x34
 
-.equ spSave,0x20
+.equ spSave,0x38
 
   /*
    *
@@ -105,19 +105,20 @@
  */
 //#define USB_PHY_READ_TEST
 
-rusbphy  .req sp   /* Pointer to the USBPHY struct, described above */
-routptr  .req r1   /* Outgoing sample buffer (pushed to stack) */
+rusbphy  .req sp  /* Pointer to the USBPHY struct, described above */
+rusmask  .req r0  /* Unstuff Mask (constant 0b111111) */
+routptr  .req r1  /* Outgoing sample buffer (pushed to stack) */
 
-rone     .req r1   /* The value 1 */
-rreg     .req r2   /* Register to sample pin */
-rmash    .req r3   /* Mask/shift to isolate required pin */
-rval     .req r4   /* Currently-sampled value */
+rone     .req r1  /* The value 1 */
+rreg     .req r2  /* Register to sample pin */
+rmash    .req r3  /* Mask/shift to isolate required pin */
+rval     .req r4  /* Currently-sampled value */
 
-rsample1 .req r5   /* Most recent 32-bits */
-rsample2 .req r6   /* Next 32-bits */
-rsample3 .req r7   /* Remaining 24-bits */
+rsample1 .req r5  /* Most recent 32-bits */
+rsample2 .req r6  /* Next 32-bits */
+rsample3 .req r7  /* Remaining 24-bits */
 
-rlastval .req r8   /* What value was the last pin? */
+rlastval .req r8  /* What value was the last pin? */
 rcounter .req r9
 runstuff .req r10
 
@@ -127,7 +128,7 @@ rdniaddr   .req r12
 
 .func usbPhyReadI
 .global usbPhyReadI
-/*int */usbPhyReadI/*(const USBPHY *phy, uint8_t samples[11])*/:
+/*int */usbPhyReadI/*(const USBPHY *phy, uint8_t samples[12])*/:
   push {r2,r3,r4,r5,r6,r7,lr}
   push {routptr}
 
@@ -149,7 +150,7 @@ rdniaddr   .req r12
   mov runstuff, r0                  // Load 0b11 into unstuff reg, as the header
                                     // ends with the pattern KK, which starts
                                     // a run of two.
-  mov r0, #0b111111                 // Unstuff mask
+  mov rusmask, #0b111111            // Unstuff mask
   mov rone, #1                      // Actually load the value '1' into the reg.
 
   ldr rreg, [rusbphy, #dpIAddr]     // Grab the address for the data input reg.
@@ -302,8 +303,8 @@ usb_phy_read_get_usb_bit:
   // Six consecutive USB states will be followed by a dummy
   // state flip.  Ignore this.
   mov rreg, runstuff
-  and rreg, rreg, r0
-  cmp rreg, r0
+  and rreg, rreg, rusmask
+  cmp rreg, rusmask
   bne usb_phy_read_get_usb_bit
   // 5 [0]
 
@@ -470,8 +471,7 @@ usb_phy_wait_5_cycles:  mov pc, lr
  * usbPhyWriteI
  * Register (arguments):
  *   r0: USBPHY
- *   r1: sample buffer
- *   r2: number of samples to write
+ *   r1: internal buffer data, prepared already
  */
 wusbphy   .req r0   /* Pointer to USBPHY value */
 
@@ -496,7 +496,9 @@ wdpsetreg .req r11
 wdpclrreg .req r12
 wdnclrreg .req sp
 
-/* Indexes off of the stack pointer */
+/* Indexes off of internal data */
+.equ wDnSAddr,0x00      /* D- Set Addr */
+.equ wDnCAddr,0x04      /* D- Clear Addr */
 .equ wPkt1,0x08
 .equ wPkt1Num,0x0c
 .equ wPkt2,0x10
@@ -504,20 +506,27 @@ wdnclrreg .req sp
 .equ wPkt3,0x18
 .equ wPkt3Num,0x1c
 .equ wFirstPkt,0x20
+.equ wSpSave,0x20       /* Stack pointer save slot (overlaps with wfirstpkt) */
 
 .func usbPhyWriteI
 .global usbPhyWriteI
-/*int */usbPhyWriteI/*(const USBPHY *phy)*/:
-  push {r1,r2,r3,r4,r5,r6,r7,lr}
+/*int */usbPhyWriteI/*(const USBPHY *phy, USBPHYInternal *internal)*/:
+  push {r2,r3,r4,r5,r6,r7,lr}
+  push {r0}                         // Save usbphy so we can restore pins later
 
-  ldr wtmp1, [wusbphy, #wFirstPkt]
-  mov wpktnum, wtmp1
+  ldr wtmp1, [r0, #dnSAddr]         // Grab the D- address for our temp reg
+  str wtmp1, [r1, #wDnSAddr]        // Store it in USBPHYInternal
+
+  ldr wtmp1, [r0, #dnCAddr]         // Grab the D- address for our temp reg
+  str wtmp1, [r1, #wDnCAddr]        // Store it in USBPHYInternal
+
+  ldr wtmp1, [r1, #wFirstPkt]       // Load the first packet out of internal
+  mov wpktnum, wtmp1                // Save it in wpktnum for later.
 
 usb_phy_write_get_first_packet:
   // Read the first packet
-  //mov wtmp1, wpktnum                // Read the current packet number.
   lsl wtmp1, #3                     // Multiply the packet number by 3.
-  add wtmp1, wusbphy                // Add it to the start of the usbphy struct.
+  add wtmp1, r1                     // Add it to the start of the usbphy struct.
   ldr wpkt, [wtmp1, #0]             // Load the value, which is the packet.
   ldr wleft, [wtmp1, #4]            // Load the number of bits left.
 
@@ -527,34 +536,40 @@ usb_phy_write_get_first_packet:
   ldr wtmp1, [wusbphy, #dpCAddr]    // cache the D+ addresses to save one
   mov wdpclrreg, wtmp1              // clock cycle.
 
-  /* Set K-state early on, to prevent glitching */
-  mov wpaddr, wdpclrreg             // D+ clr
-  ldr wnaddr, [wusbphy, #dnSAddr]   // D- set
+  /* Load D+ and D- masks, used for direction and value setting */
+  ldr wpmask, [wusbphy, #dpMask]    // USB D+ mask
+  ldr wnmask, [wusbphy, #dnMask]    // USB D- mask
 
-  // First, set both lines to OUTPUT
+  /* Set D+ line to OUTPUT */
   ldr wtmp1, [wusbphy, #dpDAddr]    // Get the direction address
   ldr wtmp2, [wtmp1]                // Get the direction value
-  ldr wpmask, [wusbphy, #dpMask]    // Get the mask value for ORing in
   orr wtmp2, wtmp2, wpmask          // Set the direciton mask
-  ldr wtmp1, [wusbphy, #dpDAddr]    // Get the direction address
   str wtmp2, [wtmp1]                // Set the direction for D+
 
+  /* Set D- line to OUTPUT */
   ldr wtmp1, [wusbphy, #dnDAddr]    // Get the direction address
   ldr wtmp2, [wtmp1]                // Get the direction value
-  ldr wnmask, [wusbphy, #dnMask]    // Get the mask value for ORing in
   orr wtmp2, wtmp2, wnmask          // Set the direciton mask
-  ldr wtmp1, [wusbphy, #dnDAddr]    // Get the direction address
   str wtmp2, [wtmp1]                // Set the direction for D-
 
+#if 0
+  /* Set K-state early on, to prevent glitching */
+  mov wpaddr, wdpsetreg             // D+ set
+  mov wnaddr, wdnclrreg             // D- clr
+  str wpmask, [wpaddr]              // Write D+ value
+  str wnmask, [wnaddr]              // Write D- value
+#endif
+
+  mov wusbphy, r1                   // Use internal data
   mov wlastsym, #1                  // Last symbols were "KK" from the header,
   mov wtmp1, #0b111100              // so load a run of 2 into the
   mov wstuff, wtmp1                 // stuff value.
 
   // Save sp, since we reuse it for D- clr address.
   mov wtmp1, sp
-  str wtmp1, [wusbphy, #spSave]
+  str wtmp1, [wusbphy, #wSpSave]
 
-  ldr wtmp1, [wusbphy, #dnCAddr]    // Cache D- clr as well.
+  ldr wtmp1, [wusbphy, #wDnCAddr]   // Cache D- clr as well.
   mov wdnclrreg, wtmp1
 
   // usb start-of-frame header //
@@ -594,7 +609,7 @@ usb_phy_write_k:
   
 usb_phy_write_j:
   mov wpaddr, wdpclrreg             // D+ clr
-  ldr wnaddr, [wusbphy, #dnSAddr]   // D- set
+  ldr wnaddr, [wusbphy, #wDnSAddr]  // D- set
 
 usb_phy_write_out:
   str wpmask, [wpaddr]
@@ -663,13 +678,15 @@ usb_phy_write_stuff_bit:
   /* Write the desired state out (each branch is balanced) */
   bne usb_phy_write_stuff_j
 usb_phy_write_stuff_k:
-  ldr wpaddr, [wusbphy, #dpSAddr]    // D+ set
-  ldr wnaddr, [wusbphy, #dnCAddr]    // D- clr
+  mov wpaddr, wdpsetreg             // D+ set
+  nop
+  ldr wnaddr, [wusbphy, #wDnCAddr]   // D- clr
   b usb_phy_write_stuff_out
   
 usb_phy_write_stuff_j:
-  ldr wpaddr, [wusbphy, #dpCAddr]    // D+ clr
-  ldr wnaddr, [wusbphy, #dnSAddr]    // D- set
+  mov wpaddr, wdpclrreg             // D+ clr
+  nop
+  ldr wnaddr, [wusbphy, #wDnSAddr]   // D- set
   nop
 
 usb_phy_write_stuff_out:
@@ -690,8 +707,10 @@ usb_write_eof:
   // --- Done Transmitting --- //
 
   // Restore sp, since we're done with it
-  ldr wtmp1, [wusbphy, #spSave]
+  ldr wtmp1, [wusbphy, #wSpSave]
   mov sp, wtmp1
+
+  pop {r0}                          // Restore wusbphy
 
   // Now, set both lines back to INPUT
   ldr wtmp1, [wusbphy, #dpDAddr]    // Get the direction address
@@ -708,13 +727,13 @@ usb_write_eof:
   ldr wtmp1, [wusbphy, #dnDAddr]    // Get the direction address
   str wtmp2, [wtmp1]                // Set the direction for Dp
 
-  mov r0, #0
-  pop {r1,r2,r3,r4,r5,r6,r7,pc}
+  mov r0, #0                        // Return 0
+  pop {r2,r3,r4,r5,r6,r7,pc}        // Return to caller
 
   // Useful functions
 usb_write_state_se0:
   mov wpaddr, wdpclrreg             // D+ clr
-  ldr wnaddr, [wusbphy, #dnCAddr]   // D- clr
+  mov wnaddr, wdnclrreg             // D- clr
   b usb_phy_write_out_func
 usb_write_state_j:
   mov wpaddr, wdpsetreg             // D+ set
@@ -722,7 +741,7 @@ usb_write_state_j:
   b usb_phy_write_out_func
 usb_write_state_k:
   mov wpaddr, wdpclrreg             // D+ clr
-  ldr wnaddr, [wusbphy, #dnSAddr]   // D- set
+  ldr wnaddr, [wusbphy, #wDnSAddr]   // D- set
   nop
 usb_phy_write_out_func:
   str wpmask, [wpaddr]

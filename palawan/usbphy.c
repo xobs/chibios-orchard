@@ -10,10 +10,13 @@ uint32_t stats_timestamps[512];
 uint32_t *stats_timestamps_ptr = stats_timestamps;
 uint32_t stats_counter;
 
+#define ADD_EVENT(phy, byte, tag)
+/*
 #define ADD_EVENT(phy, byte, tag) \
     *stats_timestamps_ptr++ = ((byte & 0xff) << 24) \
                             | ((tag & 0xff) << 16) \
                             | (SysTick->VAL & 0xffff);
+*/
 /*
 #define ADD_EVENT(phy, byte, tag) \
   do { \
@@ -31,6 +34,8 @@ uint32_t stats_counter;
 #define INSERT_EVENT_END 6
 #define IRQ_EVENT_START 7
 #define IRQ_EVENT_END 8
+#define WRPREP_EVENT_START 9
+#define WRPREP_EVENT_END 10
 
 
 #define USB_FS_RATE 12000000 /* 12 MHz */
@@ -154,7 +159,7 @@ capture_again:
   }
 
   ADD_EVENT(phy, samples[bytes_read - 1], INSERT_EVENT_START);
-  ret = usbMacInsertI(phy->mac, samples, bytes_read);
+  ret = usbMacInsertRevI(phy->mac, samples, bytes_read);
   ADD_EVENT(phy, ret, INSERT_EVENT_END);
   is_interesting = 1;
 
@@ -221,7 +226,7 @@ static void usbStateTransitionI(void) {
    The final three bytes of LUT indicate where, in the three-word buffer,
    each cell will pull data from.
  */
-static uint8_t bit_num_lut[12][7] = {
+static uint32_t bit_num_lut[12][7] = {
   /* Bits per cell    Starting cell   Source array */
   {  0,  0,  0,       0,              0, 0, 0 },
 
@@ -250,11 +255,11 @@ static inline __attribute__((always_inline)) uint32_t __rev(uint32_t val) {
 #define __rev(x) x
 #endif
 
-static int usb_phy_write_prepare(union USBPHYInternalData *internal,
-                                 const uint32_t buffer[3],
-                                 int size) {
+int usbPhyWritePrepare(struct USBPHYInternalData *internal,
+                       const uint32_t buffer[3],
+                       int size) {
 
-  uint8_t *num_bits = bit_num_lut[size];
+  uint32_t *num_bits = bit_num_lut[size];
   uint32_t *scratch = internal->scratch;
 
   /* Copy the number of bits in each slot from the LUT. */
@@ -274,15 +279,30 @@ static int usb_phy_write_prepare(union USBPHYInternalData *internal,
 }
 
 int usbPhyWriteDirectI(struct USBPHY *phy, const uint8_t buffer[12], int size) {
+
+  struct USBPHYInternalData data;
+
+  ADD_EVENT(phy, buffer[0], WRPREP_EVENT_START);
+  usbPhyWritePrepare(&data, buffer, size);
+  ADD_EVENT(phy, 0, WRPREP_EVENT_END);
+
   ADD_EVENT(phy, buffer[0], WR_EVENT_START);
-  usb_phy_write_prepare(&phy->internalData, buffer, size);
-  int ret = usbPhyWriteI(phy);
+  int ret = usbPhyWriteI(phy, &data);
+  ADD_EVENT(phy, ret, WR_EVENT_END);
+  return ret;
+}
+
+int usbPhyWritePreparedI(struct USBPHY *phy,
+                         struct USBPHYInternalData *data) {
+  ADD_EVENT(phy, 0, WR_EVENT_START);
+  int ret = usbPhyWriteI(phy, data);
   ADD_EVENT(phy, ret, WR_EVENT_END);
   return ret;
 }
 
 void usbPhyWriteTest(struct USBPHY *phy) {
 
+  struct USBPHYInternalData data;
   uint8_t buffer[] = {
 //    0xC3, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, 0xDD, 0x94,
 //    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -294,12 +314,12 @@ void usbPhyWriteTest(struct USBPHY *phy) {
   };
   static uint32_t test_num = sizeof(buffer);
 
-  usb_phy_write_prepare(&phy->internalData, buffer, test_num);
-  usbPhyWriteI(phy);
+  usbPhyWritePrepare(&data, buffer, test_num);
+  usbPhyWriteI(phy, &data);
 
-//  test_num++;
-//  if (test_num > sizeof(buffer))
-//    test_num = 1;
+  test_num++;
+  if (test_num > sizeof(buffer))
+    test_num = 1;
 }
 
 static THD_FUNCTION(usb_busy_poll_thread, arg) {

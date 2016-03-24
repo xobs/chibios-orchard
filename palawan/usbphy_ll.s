@@ -506,7 +506,7 @@ wdnclrreg .req sp
 .equ wPkt3,0x18
 .equ wPkt3Num,0x1c
 .equ wFirstPkt,0x20
-.equ wSpSave,0x20       /* Stack pointer save slot (overlaps with wfirstpkt) */
+.equ wSpSave,0x24
 
 .func usbPhyWriteI
 .global usbPhyWriteI
@@ -540,6 +540,17 @@ usb_phy_write_get_first_packet:
   ldr wpmask, [wusbphy, #dpMask]    // USB D+ mask
   ldr wnmask, [wusbphy, #dnMask]    // USB D- mask
 
+  /* Pre-set the lines to J-state to prevent glitching */
+#if 1
+  mov wpaddr, wdpsetreg             // D+ set
+  ldr wnaddr, [r1, #wDnCAddr]       // D- clr
+#else
+  mov wpaddr, wdpclrreg             // D+ clr
+  ldr wnaddr, [r1, #wDnSAddr]       // D- set
+#endif
+  str wpmask, [wpaddr]              // Write D+ value
+  str wnmask, [wnaddr]              // Write D- value
+
   /* Set D+ line to OUTPUT */
   ldr wtmp1, [wusbphy, #dpDAddr]    // Get the direction address
   ldr wtmp2, [wtmp1]                // Get the direction value
@@ -551,14 +562,6 @@ usb_phy_write_get_first_packet:
   ldr wtmp2, [wtmp1]                // Get the direction value
   orr wtmp2, wtmp2, wnmask          // Set the direciton mask
   str wtmp2, [wtmp1]                // Set the direction for D-
-
-#if 0
-  /* Set K-state early on, to prevent glitching */
-  mov wpaddr, wdpsetreg             // D+ set
-  mov wnaddr, wdnclrreg             // D- clr
-  str wpmask, [wpaddr]              // Write D+ value
-  str wnmask, [wnaddr]              // Write D- value
-#endif
 
   mov wusbphy, r1                   // Use internal data
   mov wlastsym, #1                  // Last symbols were "KK" from the header,

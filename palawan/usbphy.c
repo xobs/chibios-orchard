@@ -6,17 +6,19 @@
 #include "usbmac.h"
 #include "palawan.h"
 
+#ifdef ENABLE_LOGGING
 uint32_t stats_timestamps[512];
-uint32_t *stats_timestamps_ptr = stats_timestamps;
-uint32_t stats_counter;
-
-#define ADD_EVENT(phy, byte, tag)
-/*
 #define ADD_EVENT(phy, byte, tag) \
     *stats_timestamps_ptr++ = ((byte & 0xff) << 24) \
                             | ((tag & 0xff) << 16) \
                             | (SysTick->VAL & 0xffff);
-*/
+#else
+uint32_t stats_timestamps[1];
+#define ADD_EVENT(phy, byte, tag)
+#endif
+uint32_t *stats_timestamps_ptr = stats_timestamps;
+uint32_t stats_counter;
+
 /*
 #define ADD_EVENT(phy, byte, tag) \
   do { \
@@ -54,20 +56,20 @@ const uint8_t bit_reverse_table_256[] = {
 
 static struct USBPHY defaultUsbPhy = {
   /* PTB0 */
-  .usbdpIAddr = &FGPIOB->PDIR,
-  .usbdpSAddr = &FGPIOB->PSOR,
-  .usbdpCAddr = &FGPIOB->PCOR,
-  .usbdpDAddr = &FGPIOB->PDDR,
-  .usbdpMask  = (1 << 0),
-  .usbdpShift = 0,
+  .usbdnIAddr = &FGPIOB->PDIR,
+  .usbdnSAddr = &FGPIOB->PSOR,
+  .usbdnCAddr = &FGPIOB->PCOR,
+  .usbdnDAddr = &FGPIOB->PDDR,
+  .usbdnMask  = (1 << 0),
+  .usbdnShift = 0,
 
   /* PTA4 */
-  .usbdnIAddr = &FGPIOA->PDIR,
-  .usbdnSAddr = &FGPIOA->PSOR,
-  .usbdnCAddr = &FGPIOA->PCOR,
-  .usbdnDAddr = &FGPIOA->PDDR,
-  .usbdnMask  = (1 << 4),
-  .usbdnShift = 4,
+  .usbdpIAddr = &FGPIOA->PDIR,
+  .usbdpSAddr = &FGPIOA->PSOR,
+  .usbdpCAddr = &FGPIOA->PCOR,
+  .usbdpDAddr = &FGPIOA->PDDR,
+  .usbdpMask  = (1 << 4),
+  .usbdpShift = 4,
 };
 
 static struct USBPHY testWriteUsbPhy = {
@@ -226,7 +228,7 @@ static void usbStateTransitionI(void) {
    The final three bytes of LUT indicate where, in the three-word buffer,
    each cell will pull data from.
  */
-static uint32_t bit_num_lut[12][7] = {
+static uint8_t bit_num_lut[12][7] = {
   /* Bits per cell    Starting cell   Source array */
   {  0,  0,  0,       0,              0, 0, 0 },
 
@@ -259,7 +261,7 @@ int usbPhyWritePrepare(struct USBPHYInternalData *internal,
                        const uint32_t buffer[3],
                        int size) {
 
-  uint32_t *num_bits = bit_num_lut[size];
+  uint8_t *num_bits = bit_num_lut[size];
   uint32_t *scratch = internal->scratch;
 
   /* Copy the number of bits in each slot from the LUT. */

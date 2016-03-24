@@ -70,17 +70,28 @@ enum usb_state {
   state_tx,
 };
 
+enum usb_mac_packet_type {
+  packet_type_setup,
+  packet_type_in,
+  packet_type_out,
+};
+
 struct USBMAC {
   const char *descriptor;
   struct USBPHY *phy;
   uint32_t read_head;
   uint32_t write_head;
   uint8_t data_buffer;  /* Whether we're sending DATA0 or DATA1 */
-  uint8_t is_rx;        /* Whether receiving (SETUP or OUT) or sending (IN) */
+  uint8_t packet_type;  /* PACKET_SETUP, PACKET_IN, or PACKET_OUT */
+
+  uint8_t addr;
+  uint8_t epnum;
+  
+  uint8_t data_in[8];
 
   uint8_t *data_out;
   uint32_t data_out_left;
-  char data_in[64];
+//  char data_in[64];
   char data_in_size;
 
   struct usb_mac_statistics stats;

@@ -170,148 +170,77 @@ static int usb_copy_data(struct USBMAC *mac, uint8_t *data, unsigned int size) {
 
 extern const uint8_t bit_reverse_table_256[];
 
+static inline void usb_mac_parse_token(struct USBMAC *mac, uint8_t packet[2]) {
+
+  mac->addr = packet[1] >> 1;
+  mac->epnum = (packet[0] >> 5) | ((packet[1] << 5) & 1);
+}
+
+uint8_t last_pid = 0;
 int usbMacInsertRevI(struct USBMAC *mac, uint8_t *temp_packet, int size) {
+
+  int data_copied, data_left;
+  uint8_t *data;
 
   /* Figure out if the packet we're processing is valid, and if we expect
    * more data to follow.
    */
   switch (temp_packet[size - 1]) {
-    case USB_DIP_IN:
-      mac->is_rx = 0; /* This packet will transmit data */
 
-      /* If there is no data currently, NAK The request so they will retry */
-      if ((!mac->data_out) || (!mac->data_out_left)) {
-        usb_send_nak_i(mac);
-        return 1; /* This packet was dropped, so ignore it. */
-      }
+    case 0:
+      goto data_finished;
 
-      usb_send_data_i(mac);
-      return 0; /* Return 0, since we just sent data and the host will ACK */
+    case USB_DIP_OUT:
+      mac->packet_type = packet_type_out;
+      usb_mac_parse_token(mac, temp_packet);
+      goto data_continues;
+
+    case USB_DIP_SETUP:
+      mac->packet_type = packet_type_setup;
+      usb_mac_parse_token(mac, temp_packet);
+      goto data_continues;
 
     case USB_DIP_DATA0:
     case USB_DIP_DATA1:
-    case USB_DIP_DATA2:
-    case USB_DIP_MDATA:
       /* Always ack data packets (ignoring crc, but oh well) */
       usb_send_ack_i(mac);
 
-      if (usb_copy_data(mac, temp_packet + 1, size - 3)) {
-        /* Indicate there's an overflow error */
-        mac->stats.overflow++;
-        return -1;
+      data = mac->data_in;
+      data_left = size - 2; /* Ignore the two bytes of crc */
+      for (data_copied = 0; data_copied < size - 3; data_copied++)
+        data[data_copied] = bit_reverse_table_256[temp_packet[data_left--]];
+      mac->data_in_size = data_copied;
+
+      goto data_continues;
+
+    case USB_DIP_IN:
+      /* If there is no data currently, NAK The request so they will retry */
+      if ((!mac->data_out) || (!mac->data_out_left)) {
+        usb_send_nak_i(mac);
+        goto data_finished;
       }
-      return 1;   /* Return 1, since we have received data and we've ACKed */
-
-    case USB_DIP_SOF:
-    case USB_DIP_ACK:
-    case USB_DIP_NAK:
-    case USB_DIP_NYET:
-    case USB_DIP_STALL:
-    case USB_DIP_SPLIT:
-    case USB_DIP_PING:
-//      mac->stats.num_packets++;
-      return 1;     /* Return 1, as there is not more data coming */
-
-    case USB_DIP_OUT:
-    case USB_DIP_SETUP:
-      mac->is_rx = 1; /* We will be receiving data */
-//      mac->stats.num_packets++;
-      return 0;   /* Return 0, as DATA will soon follow */
+      usb_mac_parse_token(mac, temp_packet);
+      usb_send_data_i(mac);
+      goto data_continues;
 
     default:
-      mac->stats.illegal_pids++;
-      return -4;  /* Unrecognized PID */
+      last_pid = temp_packet[size - 1];
+      break;
   }
+
+  return -1;
+
+data_continues:
+  /* Returning 0 causes the callee to immediately look for another packet */
+  return 0;
+
+data_finished:
+  /* Returning 1 indicates success, and the callee will process packets */
+  return 1;
 }
 
 int usbMacProcessNext(struct USBMAC *mac) {
 
-#if 0
-  struct usb_packet *packet;
-  int next_packet_idx = (mac->read_head + 1) & USB_PACKET_BUFFER_MASK;
-  if (mac->write_head == mac->read_head) {
-    mac->stats.underflow++;
-    return -1;
-  }
-
-  /* Snag the current packet into our usb_packet struct */
-  packet = &mac->packets[mac->read_head];
-
-  /* Figure out which PID we're dealing with */
-  switch (packet->pid) {
-
-  /* Data packets, with CRC-16 */
-  case USB_PID_DATA0: /* DATA0 */
-  case USB_PID_DATA1: /* DATA1 */
-  case USB_PID_DATA2: /* DATA2 */
-  case USB_PID_MDATA: /* MDATA */
-    if (validate_data(packet->data, packet->size)) {
-      mac->stats.crc16_errors++;
-      goto out;
-    }
-    if (mac->is_rx) {
-      usb_send_ack_i(mac);
-#warning "Handle receiving data here"
-    }
-    else {
-#warning "Handle transmitting data here"
-//      usb_send_nak_i(mac);
-    }
-    break;
-
-  /* Token packets, with CRC-5 */
-  case USB_PID_OUT: /* OUT */
-  case USB_PID_IN: /* IN */
-    if (validate_token(packet->data, packet->size)) {
-      mac->stats.crc5_errors++;
-      goto out;
-    }
-#warning "Figure out address and endpoint here"
-    goto out;
-
-  case USB_PID_SOF: /* SOF */
-  case USB_PID_SETUP: /* SETUP */
-    if (validate_token(packet->data, packet->size)) {
-      mac->stats.crc5_errors++;
-      goto out;
-    }
-#warning "Figure out what SOF or SETUP data they want"
-    goto out;
-
-  /* One-byte packets, no CRC required */
-  case USB_PID_ACK: /* ACK */
-  case USB_PID_NAK: /* NAK */
-  case USB_PID_NYET: /* NYET */
-  case USB_PID_STALL: /* STALL */
-    /* Packet size is 8-bit PID only */
-    if (packet->size != 0) {
-      mac->stats.errors++;
-      goto out;
-    }
-    goto out;
-
-  /* Special cases (also no CRC?) */
-  case USB_PID_SPLIT: /* SPLIT */
-  case USB_PID_PING: /* PING */
-  case USB_PID_ERR: /* ERR */
-    if (packet->size != 1) {
-      mac->stats.errors++;
-      goto out;
-    }
-    goto out;
-
-  default:
-    mac->stats.illegal_pids++;
-    goto out;
-  }
-
-out:
-
-  /* Move on to the next packet */
-#warning Lock here
-  mac->read_head = next_packet_idx;
-#warning Unlock here
-#endif
   return 0;
 }
 
@@ -396,10 +325,10 @@ void usbMacInit(struct USBMAC *mac, const char *usb_descriptor) {
   mac->data_out = NULL;
   mac->data_out_left = 0;
 
-  buffer[0] = USB_DIP_ACK;
+  buffer[0] = USB_PID_ACK;
   usbPhyWritePrepare(&phyAck, buffer, 1);
 
-  buffer[0] = USB_DIP_NAK;
+  buffer[0] = USB_PID_NAK;
   usbPhyWritePrepare(&phyNak, buffer, 1);
 }
 

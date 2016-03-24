@@ -44,6 +44,7 @@ struct USBPHYInternalData {
       uint32_t first_word;  /* Which word to start with (1, 2, or 3) */
     };
   };
+  uint32_t stack_pointer_temp;  /* Temporary storage for sp during call */
 };
 
 /* Make sure this struct is not in flash.  Reads from flash are non-

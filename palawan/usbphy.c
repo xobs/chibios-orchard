@@ -8,16 +8,17 @@
 
 #ifdef ENABLE_LOGGING
 uint32_t stats_timestamps[512];
+uint32_t *stats_timestamps_ptr = stats_timestamps;
+uint32_t stats_counter;
 #define ADD_EVENT(phy, byte, tag) \
     *stats_timestamps_ptr++ = ((byte & 0xff) << 24) \
                             | ((tag & 0xff) << 16) \
                             | (SysTick->VAL & 0xffff);
+#define STATS(x) do { x; } while(0);
 #else
-uint32_t stats_timestamps[1];
 #define ADD_EVENT(phy, byte, tag)
+#define STATS(x) (void)0
 #endif
-uint32_t *stats_timestamps_ptr = stats_timestamps;
-uint32_t stats_counter;
 
 /*
 #define ADD_EVENT(phy, byte, tag) \
@@ -91,14 +92,22 @@ static struct USBPHY testWriteUsbPhy = {
 };
 
 int usbPhyResetStatistics(struct USBPHY *phy) {
+#ifdef ENABLE_LOGGING
   memset(&phy->stats, 0, sizeof(phy->stats));
   phy->stats.out_buffer_size = MAX_SEND_QUEUES;
-//  phy->stats.timestamp_mask = 0x1ff;
+#else
+  (void)phy;
+#endif
   return 0;
 }
 
 const struct usb_phy_statistics *usbPhyGetStatistics(struct USBPHY *phy) {
+#ifdef ENABLE_LOGGING
   return &phy->stats;
+#else
+  (void)phy;
+  return NULL;
+#endif
 }
 
 int usbPhyInitialized(struct USBPHY *phy) {
@@ -110,6 +119,7 @@ int usbPhyInitialized(struct USBPHY *phy) {
 
 int usbPhyQueue(struct USBPHY *phy, const uint8_t *buffer, int buffer_size) {
 
+#if 0
   phy->queue_sizes[phy->write_head] = buffer_size;
   memcpy(phy->queues[phy->write_head], buffer, buffer_size);
   phy->write_head = (phy->write_head + 1) & MAX_SEND_QUEUES_MASK;
@@ -118,65 +128,108 @@ int usbPhyQueue(struct USBPHY *phy, const uint8_t *buffer, int buffer_size) {
   osalSysLock();
   osalThreadResumeI(&defaultUsbPhy.thread, MSG_OK);
   osalSysUnlock();
+#else
+  (void)phy;
+  (void)buffer;
+  (void)buffer_size;
+#endif
   return 0;
 }
 
+/*
+static void wait_for_transition(struct USBPHY *phy, int tries) {
+  uint32_t start = *((uint32_t *)phy->usbdnIAddr) & phy->usbdnMask;
+  while (tries-- && (start == (*((uint32_t *)phy->usbdnIAddr) & phy->usbdnMask)))
+    ;
+}
+*/
+
+#ifdef ENABLE_LOGGING
 static int is_interesting;
-int usbCaptureI(struct USBPHY *phy) {
-  int bytes_read;
-  uint8_t samples[12];
+#endif
+
+//int usbCaptureI(struct USBPHY *phy) __attribute__((section (".ramtext")));
+static int usbCaptureI(struct USBPHY *phy) {
+
+  uint8_t *samples;
+
   int ret;
-  int capture_tries = 0;
+  int capture_tries;
 
   /* Toggle the green LED */
-  *((volatile uint32_t *)0xf80000cc) = 0x80;
+  //*((volatile uint32_t *)0xf80000cc) = 0x80;
+
+  capture_tries = 0;
 
 capture_again:
+  samples = (uint8_t *)phy->byte_queue[phy->byte_queue_head];
 
-  ADD_EVENT(phy, capture_tries, RD_EVENT_START);
-  bytes_read = usbPhyReadI(phy, samples);
-  ADD_EVENT(phy, bytes_read, RD_EVENT_END);
+  ret = usbPhyReadI(phy, (uint32_t *)samples);
+  PORTA->ISFR = 0xFFFFFFFF;
 
-  /* If we've got more captures to try, try again */
-  if ((bytes_read < 0) && (capture_tries --> 0))
+  if (ret == USB_DIP_IN) {
+    phy->byte_queue_head++;
+    if (phy->data_is_queued) {
+      phy->data_is_queued = 0;
+      usbPhyWriteI(phy, &phy->queued_data);
+      capture_tries = 20;
       goto capture_again;
-
-  if (bytes_read <= 0) {
-    if (bytes_read == -1)
-      phy->stats.timeout++;
-
-    else if (bytes_read == -2)
-      phy->stats.overflow++;
-
-    else if (bytes_read == 0)
-      phy->stats.empty++;
-
-    /* No end-of-sync can be returned when we're mis-aligned */
-    else if (bytes_read == -3)
-      phy->stats.no_end_of_sync++;
-
+    }
     else
-      phy->stats.errors++;
-    goto err;
+      usbPhyWriteI(phy, &phyNak);
+    ret = 1;
+  }
+  else if (ret == USB_DIP_SETUP) {
+    phy->byte_queue_head++;
+    capture_tries = 20;
+    goto capture_again;
+  }
+  else if (ret == USB_DIP_OUT) {
+    phy->byte_queue_head++;
+    goto capture_again;
   }
 
-  ADD_EVENT(phy, samples[bytes_read - 1], INSERT_EVENT_START);
-  ret = usbMacInsertRevI(phy->mac, samples, bytes_read);
-  ADD_EVENT(phy, ret, INSERT_EVENT_END);
-  is_interesting = 1;
+  else if ((ret == USB_DIP_DATA0) || (ret == USB_DIP_DATA1)) {
+    phy->byte_queue_head++;
+    usbPhyWriteI(phy, &phyAck);
+    ret = 1;
 
-  /* If the Insert operation has indicated we're to expect another packet,
-   * capture another packet.
-   */
-  if (!ret) {
-    capture_tries = 10;
-    goto capture_again;
+    /* During SETUP, we will be asked, very quickly, to supply data.
+     * Prepare to NAK this.
+     */
+    if (capture_tries)
+      goto capture_again;
+  }
+
+  else if (ret <= 0) {
+    if (capture_tries > 0) {
+      /* If we've got more captures to try, try again */
+      capture_tries--;
+      goto capture_again;
+    }
+
+    return -1;
   }
 
   return ret;
 
-err:
-  return -1;
+#if 0
+    if (ret == -1)
+      STATS(phy->stats.timeout++);
+
+    else if (ret == -2)
+      STATS(phy->stats.overflow++);
+
+    else if (ret == 0)
+      STATS(phy->stats.empty++);
+
+    /* No end-of-sync can be returned when we're mis-aligned */
+    else if (ret == -3)
+      STATS(phy->stats.no_end_of_sync++);
+
+    else
+      STATS(phy->stats.errors++);
+#endif
 }
 
 /*
@@ -192,22 +245,19 @@ static void usbStateTransitionI(void) {
 
   int ret;
   struct USBPHY *phy = &defaultUsbPhy;
-  is_interesting = 0;
 
-  ADD_EVENT(phy, 0, IRQ_EVENT_START);
+  do {
+    ret = usbCaptureI(phy);
+  } while (PORTA->ISFR);
 
-  OSAL_IRQ_PROLOGUE();
-  osalSysLockFromISR();
-  ret = usbCaptureI(&defaultUsbPhy);
-  if (ret >= 0 && phy->initialized)
+  /*
+  if (ret >= 0 && phy->initialized) {
+    osalSysLockFromISR();
     osalThreadResumeI(&phy->thread, MSG_OK);
-  osalSysUnlockFromISR();
-  OSAL_IRQ_EPILOGUE();
+    osalSysUnlockFromISR();
+  }
+  */
 
-  ADD_EVENT(phy, ret, IRQ_EVENT_END);
-
-  if (!is_interesting)
-    stats_timestamps_ptr -= 4;
   return;
 }
 
@@ -257,10 +307,9 @@ static inline __attribute__((always_inline)) uint32_t __rev(uint32_t val) {
 #define __rev(x) x
 #endif
 
-int usbPhyWritePrepare(struct USBPHYInternalData *internal,
-                       const uint32_t buffer[3],
-                       int size) {
-
+static int usb_phy_write_prepare_internal(struct USBPHYInternalData *internal,
+                                          const uint32_t buffer[3],
+                                          int size) {
   uint8_t *num_bits = bit_num_lut[size];
   uint32_t *scratch = internal->scratch;
 
@@ -280,26 +329,29 @@ int usbPhyWritePrepare(struct USBPHYInternalData *internal,
   return 0;
 }
 
-int usbPhyWriteDirectI(struct USBPHY *phy, const uint8_t buffer[12], int size) {
+int usbPhyWritePrepare(struct USBPHY *phy,
+                       const uint32_t buffer[3],
+                       int size) {
+
+  phy->data_is_queued = 1;
+  return usb_phy_write_prepare_internal(&phy->queued_data, buffer, size);
+}
+
+int usbPhyWriteDirectI(struct USBPHY *phy, const uint32_t buffer[3], int size) {
 
   struct USBPHYInternalData data;
 
-  ADD_EVENT(phy, buffer[0], WRPREP_EVENT_START);
-  usbPhyWritePrepare(&data, buffer, size);
-  ADD_EVENT(phy, 0, WRPREP_EVENT_END);
-
-  ADD_EVENT(phy, buffer[0], WR_EVENT_START);
-  int ret = usbPhyWriteI(phy, &data);
-  ADD_EVENT(phy, ret, WR_EVENT_END);
-  return ret;
+  usbPhyWritePrepare(phy, buffer, size);
+  usbPhyWriteI(phy, &data);
+  return 0;
 }
 
-int usbPhyWritePreparedI(struct USBPHY *phy,
-                         struct USBPHYInternalData *data) {
-  ADD_EVENT(phy, 0, WR_EVENT_START);
-  int ret = usbPhyWriteI(phy, data);
-  ADD_EVENT(phy, ret, WR_EVENT_END);
-  return ret;
+int usbPhyWritePrepared(struct USBPHY *phy,
+                        struct USBPHYInternalData *data) {
+  __disable_irq();
+  usbPhyWriteI(phy, data);
+  __enable_irq();
+  return 0;
 }
 
 void usbPhyWriteTest(struct USBPHY *phy) {
@@ -316,7 +368,7 @@ void usbPhyWriteTest(struct USBPHY *phy) {
   };
   static uint32_t test_num = sizeof(buffer);
 
-  usbPhyWritePrepare(&data, buffer, test_num);
+  usbPhyWritePrepare(phy, (void *)buffer, test_num);
   usbPhyWriteI(phy, &data);
 
   test_num++;
@@ -324,25 +376,57 @@ void usbPhyWriteTest(struct USBPHY *phy) {
     test_num = 1;
 }
 
-static THD_FUNCTION(usb_busy_poll_thread, arg) {
+static THD_FUNCTION(usb_worker_thread, arg) {
 
   struct USBPHY *phy = arg;
 
   chRegSetThreadName("USB poll thread");
   while (1) {
-    osalSysLock();
-    (void) osalThreadSuspendS(&phy->thread);
-    osalSysUnlock();
+//    osalSysLock();
+//    (void) osalThreadSuspendS(&phy->thread);
+//    osalSysUnlock();
+    if (phy->byte_queue_head == phy->byte_queue_tail) {
+      chThdSleepMilliseconds(1);
+      continue;
+    }
 
-    usbMacProcess(phy->mac);
-    if (phy->initialized)
-      chEvtBroadcast(&phy->data_available);
+    if (!phy->initialized)
+      continue;
+
+    while (phy->byte_queue_tail != phy->byte_queue_head) {
+      uint8_t *in_ptr = (uint8_t *)phy->byte_queue[phy->byte_queue_tail];
+      uint8_t bytes[12];
+      int32_t data_left;
+      uint32_t data_copied;
+
+      data_left = in_ptr[11] - 1;
+      data_copied = 0;
+
+      if (data_left > 0) {
+        while (data_left >= 0)
+          bytes[data_copied++] = bit_reverse_table_256[in_ptr[data_left--]];
+        usbMacProcess(phy->mac, bytes, data_copied);
+      }
+
+      // Finally, move on to the next packet
+      phy->byte_queue_tail++;
+    }
+    //chEvtBroadcast(&phy->data_available);
   }
 
   return;
 }
 
 void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac) {
+
+  uint32_t buffer[3] = {};
+  uint8_t *buffer_b = (uint8_t *)buffer;
+
+  buffer_b[0] = USB_PID_ACK;
+  usb_phy_write_prepare_internal(&phyAck, buffer, 1);
+
+  buffer_b[0] = USB_PID_NAK;
+  usb_phy_write_prepare_internal(&phyNak, buffer, 1);
 
   phy->mac = mac;
   usbMacSetPhy(mac, phy);
@@ -351,7 +435,7 @@ void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac) {
   usbPhyDetach(phy);
   usbPhyResetStatistics(phy);
   chThdCreateStatic(phy->waThread, sizeof(phy->waThread),
-                    HIGHPRIO, usb_busy_poll_thread, phy);
+                    HIGHPRIO, usb_worker_thread, phy);
 }
 
 struct USBPHY *usbPhyDefaultPhy(void) {
@@ -366,8 +450,13 @@ struct USBPHY *usbPhyTestPhy(void) {
 
 OSAL_IRQ_HANDLER(KINETIS_PORTA_IRQ_VECTOR) {
   /* Clear all pending interrupts on this port. */
-  usbStateTransitionI();
-  PORTA->ISFR = 0xFFFFFFFF;
+//  OSAL_IRQ_PROLOGUE();
+  __disable_irq();
+  do {
+    usbStateTransitionI();
+  } while (PORTA->ISFR);
+  __enable_irq();
+//  OSAL_IRQ_EPILOGUE();
 }
 
 void usbPhyDetach(struct USBPHY *phy) {

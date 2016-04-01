@@ -315,6 +315,11 @@ usb_phy_read_exit:
   strb r0, [routptr, #11]         // Save the count to samples[11]
   // 8
 
+  mov r2, r0                      // Figure out which byte contains PID
+  sub r2, #1                      // It's the final byte
+  ldrb r0, [routptr, r2]          // Load the result into return value
+  // 4
+
   pop {r2-r5}
   mov r8, r2
   mov r9, r3
@@ -456,7 +461,7 @@ wdnclrreg .req sp
   mov r3, r9
   mov r4, r10
   mov r5, r11
-  push {r0, r2-r5}                  // Save usbphy so we can restore pins later
+  push {r0,r2-r5}                  // Save usbphy so we can restore pins later
 
   /* Load D+ set and clear registers early on */
   ldr wtmp1, [wusbphy, #dpSAddr]    // Registers are faster than RAM, and we
@@ -471,10 +476,10 @@ wdnclrreg .req sp
   /* Pre-set the lines to J-state to prevent glitching */
 #if 1
   mov wpaddr, wdpsetreg             // D+ set
-  ldr wnaddr, [r0, #dnCAddr]        // D- clr
+  ldr wnaddr, [wusbphy, #dnCAddr]        // D- clr
 #else
   mov wpaddr, wdpclrreg             // D+ clr
-  ldr wnaddr, [r0, #dnSAddr]        // D- set
+  ldr wnaddr, [wusbphy, #dnSAddr]        // D- set
 #endif
   str wpmask, [wpaddr]              // Write D+ value
   str wnmask, [wnaddr]              // Write D- value
@@ -493,16 +498,16 @@ wdnclrreg .req sp
 
   /* Set K state.  This indicates the start of the packet. */
   mov wpaddr, wdpclrreg             // D+ clr
-  ldr wnaddr, [r0, #dnSAddr]        // D- set
+  ldr wnaddr, [wusbphy, #dnSAddr]        // D- set
   str wpmask, [wpaddr]              // Write D+ value
   str wnmask, [wnaddr]              // Write D- value
 
   /* Now that the packet has started, we have 30 cycles to complete setup. */
 
-  ldr wtmp1, [r0, #dnSAddr]         // Grab the D- address for our temp reg
+  ldr wtmp1, [wusbphy, #dnSAddr]         // Grab the D- address for our temp reg
   str wtmp1, [r1, #wDnSAddr]        // Store it in USBPHYInternal
 
-  ldr wtmp1, [r0, #dnCAddr]         // Grab the D- address for our temp reg
+  ldr wtmp1, [wusbphy, #dnCAddr]         // Grab the D- address for our temp reg
   str wtmp1, [r1, #wDnCAddr]        // Store it in USBPHYInternal
 
   ldr wtmp1, [r1, #wFirstPkt]       // Load the first packet out of internal
@@ -678,7 +683,7 @@ usb_write_eof:
   ldr wtmp1, [wusbphy, #wSpSave]
   mov sp, wtmp1
 
-  pop {r0, r2-r5}                   // Restore usbphy
+  pop {r0,r2-r5}                   // Restore usbphy
   mov r8, r2
   mov r9, r3
   mov r10, r4
@@ -720,3 +725,16 @@ usb_phy_write_out_func:
 .endfunc
 .type usbPhyWriteI, %function
 .size usbPhyWriteI, .-usbPhyWriteI
+
+/*
+.func NMI_Handler
+.global NMI_Handler
+NMI_Handler:
+  nop
+  nop
+  nop
+  bx lr
+.endfunc
+.type NMI_Handler, %function
+.size NMI_Handler, .-NMI_Handler
+*/

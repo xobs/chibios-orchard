@@ -75,35 +75,39 @@ struct USBPHY {
   uint32_t usbdnMask;
 
   uint32_t spSave;  /* The stack pointer is stored here during reading */
+  uint32_t bufSave; /* The output buffer is stored here during reading */
 
-  struct usb_phy_statistics stats;
-  uint32_t write_head;
-  uint32_t read_head;
-  uint32_t queues[MAX_SEND_QUEUES][BYTE_BUFFER_SIZE];
-  uint32_t queue_sizes[MAX_SEND_QUEUES];
+  struct USBPHYInternalData queued_data;
+  int data_is_queued;
 
   thread_reference_t thread;
   THD_WORKING_AREA(waThread, 128);
 
   event_source_t data_available;
+
+  uint32_t byte_queue[256][3];
+  uint8_t byte_queue_head;
+  uint8_t byte_queue_tail;
 } __attribute__((packed));
 
 const struct usb_phy_statistics *usbPhyGetStatistics(struct USBPHY *phy);
 int usbPhyResetStatistics(struct USBPHY *phy);
 
 void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac);
-int usbPhyReadI(const struct USBPHY *phy, uint8_t samples[12]);
-int usbPhyWriteI(const struct USBPHY *phy, struct USBPHYInternalData *data);
+int usbPhyReadI(const struct USBPHY *phy, uint32_t samples[3]);
+void usbPhyWriteI(const struct USBPHY *phy, struct USBPHYInternalData *data);
 void usbPhyWriteTestPattern(const struct USBPHY *phy);
 void usbPhyWriteTest(struct USBPHY *phy);
 int usbProcessIncoming(struct USBPHY *phy);
 int usbPhyQueue(struct USBPHY *phy, const uint8_t *buffer, int buffer_size);
 int usbCapture(struct USBPHY *phy);
 int usbPhyInitialized(struct USBPHY *phy);
-int usbPhyWriteDirectI(struct USBPHY *phy, const uint8_t buffer[12], int size);
+int usbPhyWriteDirectI(struct USBPHY *phy, const uint32_t buffer[8], int size);
 int usbPhyWritePreparedI(struct USBPHY *phy,
                          struct USBPHYInternalData *data);
-int usbPhyWritePrepare(struct USBPHYInternalData *data,
+int usbPhyWritePrepared(struct USBPHY *phy,
+                        struct USBPHYInternalData *data);
+int usbPhyWritePrepare(struct USBPHY *phy,
                        const uint32_t buffer[3],
                        int size);
 

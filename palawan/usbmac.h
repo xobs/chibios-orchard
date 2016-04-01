@@ -45,6 +45,7 @@ struct usb_packet {
       uint8_t data[10]; /* Including CRC */
     };
     uint8_t raw_data[11];
+    uint32_t raw_data_32[3];
   };
   uint8_t size; /* Not including pid (so may be 0) */
   /* Checksum omitted */
@@ -71,27 +72,59 @@ enum usb_state {
 };
 
 enum usb_mac_packet_type {
+  packet_type_none,
   packet_type_setup,
   packet_type_in,
   packet_type_out,
 };
 
+struct usb_mac_setup_packet {
+  uint8_t bmRequestType;
+  uint8_t bRequest;
+  uint16_t wValue;
+  uint16_t wIndex;
+  uint16_t wLength;
+} __attribute__((packed));
+
+struct usb_mac_device_descriptor {
+  uint8_t bLength;
+  uint8_t bDescriptorType;
+  uint16_t bcdUSB;
+  uint8_t bDeviceClass;
+  uint8_t bDeviceSubClass;
+  uint8_t bDeviceProtocol;
+  uint8_t bMaxPacketSize0;
+  uint16_t idVendor;
+  uint16_t idProduct;
+  uint16_t bcdDevice;
+  uint8_t iManufacturer;
+  uint8_t iProduct;
+  uint8_t iSerialNumber;
+  uint8_t bNumConfigurations;
+} __attribute__((packed));
+
 struct USBMAC {
-  const char *descriptor;
   struct USBPHY *phy;
-  uint32_t read_head;
-  uint32_t write_head;
+  const struct usb_mac_device_descriptor *descriptor;
+  int phy_internal_is_ready;
+
   uint8_t data_buffer;  /* Whether we're sending DATA0 or DATA1 */
   uint8_t packet_type;  /* PACKET_SETUP, PACKET_IN, or PACKET_OUT */
 
   uint8_t addr;
   uint8_t epnum;
   
-  uint8_t data_in[8];
+  union {
+    uint8_t data_in[8];
+    struct usb_mac_setup_packet data_setup;
+  };
 
-  uint8_t *data_out;
+  const uint8_t *data_out;
   uint32_t data_out_left;
-//  char data_in[64];
+
+  /* Data that's ready to be sent */
+  struct USBPHYInternalData phy_internal;
+
   char data_in_size;
 
   struct usb_mac_statistics stats;
@@ -116,19 +149,22 @@ int usbMacResetStatistics(struct USBMAC *mac);
    the SoC must be able to quickly respond.  In these cases, it is inadvisable
    to switch threads.
  */
-int usbMacInsertRevI(struct USBMAC *, uint8_t *incoming_packet, int size);
+int usbMacInsertRevI(struct USBMAC *, uint32_t *incoming_packet, int size);
 
 /* Get the next available USB packet, or NULL if none available */
 const struct usb_packet *usbMacGetPacket(struct USBMAC *mac);
 
 /* Process all packets sitting in the queue */
-int usbMacProcess(struct USBMAC *mac);
+int usbMacProcess(struct USBMAC *mac,
+                  const uint8_t packet[11],
+                  uint32_t count);
 
 /* Send the specified USB packet */
 int usbMacSendPacket(struct USBMAC *mac, const struct usb_packet *packet);
 
 /* Initialize the given USB MAC */
-void usbMacInit(struct USBMAC *mac, const char *usb_descriptor);
+void usbMacInit(struct USBMAC *mac,
+                const struct usb_mac_device_descriptor *usb_descriptor);
 
 /* Set the given MAC to use the given PHY */
 void usbMacSetPhy(struct USBMAC *mac, struct USBPHY *phy);
@@ -141,5 +177,16 @@ const char *usbPidToStr(uint8_t pid);
 
 /* Get the PHY associated with this MAC */
 struct USBPHY *usbMacPhy(struct USBMAC *mac);
+
+static inline int isValidPID(uint8_t pid) {
+  return ((pid ^ (pid >> 4)) & 0xf) == 0xf;
+}
+
+void usbSendAckI(struct USBMAC *mac);
+void usbSendNakI(struct USBMAC *mac);
+void usbSendDataI(struct USBMAC *mac);
+
+extern struct USBPHYInternalData phyAck;
+extern struct USBPHYInternalData phyNak;
 
 #endif /* __USB_MAC_H__ */

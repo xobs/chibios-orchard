@@ -114,10 +114,21 @@ static void print_mcu_info(void) {
 int loop_counter = 0;
 int last_ret;
 
-static const char usb_device_descriptor[] = {
-  0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x08,
-  0xCF, 0x1B, 0xCE, 0x05, 0x14, 0xA0, 0x00, 0x02,
-  0x00, 0x01,
+struct usb_mac_device_descriptor usb_device_descriptor = {
+  .bLength = sizeof(struct usb_mac_device_descriptor),
+  .bDescriptorType = 1, /* DEVICE */
+  .bcdUSB = 0x0200, /* USB 2.0 */
+  .bDeviceClass = 0x00,
+  .bDeviceSubClass = 0x00,
+  .bDeviceProtocol = 0x00,
+  .bMaxPacketSize0 = 0x08, /* 8-byte packets max */
+  .idVendor = 0x1bcf,
+  .idProduct = 0x05ce,
+  .bcdDevice = 0x1000,  /* Device release 1.0 */
+  .iManufacturer = 0x00,
+  .iProduct = 0x02,
+  .iSerialNumber = 0x00,
+  .bNumConfigurations = 0x01,
 };
 
 extern void usbPhyTime(int, int);
@@ -145,7 +156,17 @@ int main(void)
   }
 #endif
 
-  usbMacInit(usbMacDefault(), usb_device_descriptor);
+#if 1
+  {
+    int i;
+    for (i = 0; i < CORTEX_NUM_VECTORS; i++)
+      NVIC_SetPriority(i, 3);
+    NVIC_SetPriority(PendSV_IRQn, 1);
+    NVIC_SetPriority(PINA_IRQn, 0);
+  }
+#endif
+
+  usbMacInit(usbMacDefault(), &usb_device_descriptor);
   usbPhyInit(usbPhyDefaultPhy(), usbMacDefault());
 
   palawanEventsStart();

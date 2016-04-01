@@ -20,6 +20,7 @@ enum usb_setup_request {
   usb_setup_synch_frame = 12,
 };
 
+#ifdef ENABLE_LOGGING
 static const char *event_names[] = {
   "(none)",
   "WR_EVENT_START",
@@ -33,23 +34,11 @@ static const char *event_names[] = {
   "WRPREP_EVENT_START",
   "WRPREP_EVENT_END",
 };
-
-
-extern uint32_t stats_timestamps[256];
-extern uint32_t *stats_timestamps_ptr;
+#endif
 
 void cmd_usbmac_print(BaseSequentialStream *chp, struct USBMAC *mac)
 {
-  const struct usb_mac_statistics *mac_stats;
-  const struct usb_phy_statistics *phy_stats;
-  const struct usb_packet *packet;
-  struct USBPHY *phy = mac->phy;
-  int count;
-  unsigned int i;
-
-  phy_stats = usbPhyGetStatistics(phy);
-  mac_stats = usbMacGetStatistics(mac);
-
+#if 0
   count = 0;
   chprintf(chp, "USB MAC Events:\r\n");
   while ((packet = usbMacGetPacket(mac)) != NULL) {
@@ -66,8 +55,17 @@ void cmd_usbmac_print(BaseSequentialStream *chp, struct USBMAC *mac)
   }
 
   chprintf(chp, "USB processed %d MAC packets\r\n", count);
+#endif
+
+#ifdef ENABLE_LOGGING
+  const struct usb_mac_statistics *mac_stats;
+  const struct usb_phy_statistics *phy_stats;
+  phy_stats = usbPhyGetStatistics(phy);
+  mac_stats = usbMacGetStatistics(mac);
 
   chprintf(chp, "USB PHY Events:\r\n");
+  extern uint32_t stats_timestamps[256];
+  extern uint32_t *stats_timestamps_ptr;
   uint32_t *timestamp = stats_timestamps;
   count = 0;
   while (timestamp != stats_timestamps_ptr) {
@@ -110,6 +108,7 @@ void cmd_usbmac_print(BaseSequentialStream *chp, struct USBMAC *mac)
 
   usbPhyResetStatistics(phy);
   usbMacResetStatistics(mac);
+#endif
 }
 
 static void cmd_usbmac(BaseSequentialStream *chp, int argc, char *argv[])

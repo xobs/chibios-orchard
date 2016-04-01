@@ -65,7 +65,7 @@
  *          in other contexts.  If it's FALSE (or undefined), then the
  *          standard NMI-based context switch mechanism is used.
  */
-#define CORTEX_ALTERNATE_SWITCH             FALSE
+#define CORTEX_ALTERNATE_SWITCH             TRUE
 
 /** @} */
 
@@ -382,7 +382,7 @@
  * @note    The default failure mode is to halt the system with the global
  *          @p panic_msg variable set to @p NULL.
  */
-#define CH_DBG_ENABLE_STACK_CHECK           TRUE
+#define CH_DBG_ENABLE_STACK_CHECK           FALSE
 
 /**
  * @brief   Debug option, stacks initialization.

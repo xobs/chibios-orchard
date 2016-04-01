@@ -8,9 +8,12 @@
 static struct USBMAC default_mac;
 
 /* Pre-processed internal data structures for fast responses */
-static struct USBPHYInternalData phyAck;
-static struct USBPHYInternalData phyNak;
+struct USBPHYInternalData phyAck;
+struct USBPHYInternalData phyNak;
 
+extern const uint8_t bit_reverse_table_256[];
+
+#if 0
 static const uint8_t crc5Table4[] =
 {
   0x00, 0x0E, 0x1C, 0x12, 0x11, 0x1F, 0x0D, 0x03,
@@ -29,47 +32,71 @@ static int crc5Check(const unsigned char * data) {
   b = data[1] ^ crc;
   return (crc5Table4[b & 0x0F] ^ crc5Table0[(b>>4) & 0x0F]) != 0x06;
 }
+#endif
 
-/* On entry, addr=>start of data
-             num = length of data
-             crc = incoming CRC     */
-static uint16_t crc16(const unsigned char *addr, int num, int crc, int poly) {
-  int i;
-
-  for (; num > 0; num--)               /* Step through bytes in memory */
+static uint16_t crc16_add(uint16_t crc, uint8_t c, uint16_t poly)
+{
+  uint8_t  i;
+  
+  for (i=0; i<8; i++)
   {
-    uint8_t c = *addr++;
-    
-//    crc = crc ^ (*addr++ << 8);      /* Fetch byte from memory, XOR into CRC top byte*/
-    for (i = 0; i < 8; i++)              /* Prepare to rotate 8 bits */
+    if ((crc ^ c) & 1) 
+    { 
+      crc = (crc >> 1) ^ poly;
+    } 
+    else 
     {
-      if ((crc ^ c) & 1)
-        crc = (crc >> 1) ^ poly;
-      else
-        crc >>= 1;
-      c >>= 1;
-    }                              /* Loop for 8 bits */
-  }                                /* Loop until num=0 */
-  return ~crc;                      /* Return updated CRC */
+      crc >>= 1;
+    }
+    c >>= 1;
+  }
+  return crc;
 }
 
-static int validate_token(const uint8_t *data, int size) {
-  if (size != 2)
-    return -1;
-  return crc5Check(data);
+static uint16_t crc16(const uint8_t *data, uint32_t count,
+                      uint16_t init, uint32_t poly) {
+
+  while (count--)
+    init = crc16_add(init, *data++, poly);
+
+  return init;
 }
 
-static int validate_data(const uint8_t *data, int size) {
-  uint16_t result;
-  uint16_t compare;
+static void usb_mac_process_data(struct USBMAC *mac) {
 
-  if (size < 2)
-    return -1;
+  struct usb_packet packet;
+  uint16_t crc;
 
-  result = crc16(data, size - 2, 0xffff, 0xa001);
-  compare = ((data[size - 1] << 8) & 0xff00) | ((data[size - 2] << 0) & 0x00ff);
+  if (mac->phy_internal_is_ready)
+    return;
+  if (!mac->data_out)
+    return;
+  if (!mac->data_out_left)
+    return;
 
-  return compare - result;
+  if (mac->data_buffer++ & 1)
+    packet.pid = USB_PID_DATA1;
+  else
+    packet.pid = USB_PID_DATA0;
+
+  /* Keep the packet size to 8 bytes max */
+  packet.size = mac->data_out_left;
+  if (mac->data_out_left > 8)
+    packet.size = 8;
+  mac->data_out_left -= packet.size;
+
+  /* Copy over data bytes */
+  memcpy(packet.data, mac->data_out, packet.size);
+  mac->data_out += packet.size;
+
+  /* Calculate and copy the crc16 */
+  crc = ~crc16(packet.data, packet.size, 0xffff, 0xa001);
+  packet.data[packet.size++] = crc;
+  packet.data[packet.size++] = crc >> 8;
+
+  /* Prepare the packet, including the PID at the end */
+  usbPhyWritePrepare(mac->phy, packet.raw_data_32, packet.size + 1);
+  mac->phy_internal_is_ready = 1;
 }
 
 const char *usbPidToStr(uint8_t pid) {
@@ -119,217 +146,216 @@ const struct usb_mac_statistics *usbMacGetStatistics(struct USBMAC *mac) {
   return &mac->stats;
 }
 
-static void usb_send_ack_i(struct USBMAC *mac) {
-    usbPhyWritePreparedI(mac->phy, &phyAck);
+void usbSendAckI(struct USBMAC *mac) {
+    usbPhyWriteI(mac->phy, &phyAck);
 }
 
-static void usb_send_nak_i(struct USBMAC *mac) {
-    usbPhyWritePreparedI(mac->phy, &phyNak);
+void usbSendNakI(struct USBMAC *mac) {
+    usbPhyWriteI(mac->phy, &phyNak);
 }
 
-static void usb_send_data_i(struct USBMAC *mac) {
-  struct usb_packet packet;
-  uint16_t crc;
+void usbSendDataI(struct USBMAC *mac) {
 
-  if (mac->data_buffer++ & 1)
-    packet.pid = USB_PID_DATA0;
-  else
-    packet.pid = USB_PID_DATA1;
-
-  /* Keep the packet size to 8 bytes max */
-  packet.size = mac->data_out_left;
-  if (mac->data_out_left > 8)
-    packet.size = 8;
-  mac->data_out_left -= packet.size;
-
-  /* Copy over data bytes */
-  memcpy(packet.data, mac->data_out, packet.size);
-  mac->data_out += packet.size;
-
-  /* Calculate and copy the crc16 */
-  crc = crc16(packet.data, packet.size, 0xffff, 0x8005);
-  packet.data[packet.size++] = crc >> 8;
-  packet.data[packet.size++] = crc;
-
-  /* Write the packet out, including the PID at the end */
-  usbPhyWriteDirectI(mac->phy, packet.raw_data, packet.size + 1);
+  mac->phy_internal_is_ready = 0;
+  usbPhyWriteI(mac->phy, &mac->phy_internal);
 }
 
-static int usb_copy_data(struct USBMAC *mac, uint8_t *data, unsigned int size) {
-
-  /* Ensure we don't overflow mac->data_in */
-  if ((mac->data_in_size + size) > sizeof(mac->data_in))
-    return -1;
-
-  /* Copy bytes to the data_in buffer */
-  memcpy(mac->data_in + mac->data_in_size, data, size);
-  mac->data_in_size += size;
-
-  return 0;
-}
-
-extern const uint8_t bit_reverse_table_256[];
-
-static inline void usb_mac_parse_token(struct USBMAC *mac, uint8_t packet[2]) {
+#if 0
+static inline void usb_mac_parse_token_rev(struct USBMAC *mac, uint8_t packet[2]) {
 
   mac->addr = packet[1] >> 1;
   mac->epnum = (packet[0] >> 5) | ((packet[1] << 5) & 1);
 }
 
-uint8_t last_pid = 0;
-int usbMacInsertRevI(struct USBMAC *mac, uint8_t *temp_packet, int size) {
+typedef int (*pidHandler)(struct USBMAC *mac, uint8_t *rev_pkt, int size);
+
+static int dip_handler_in(struct USBMAC *mac, uint8_t *rev_pkt, int size) {
+
+  /* If there is no data currently, NAK the request so they will retry */
+  /*
+  (void)size;
+  if (!mac->phy_internal_is_ready) {
+    usbSendNakI(mac);
+    mac->packet_type = packet_type_in;
+    usb_mac_parse_token_rev(mac, rev_pkt);
+    return 0;
+  }
+
+  usbSendDataI(mac);
+  */
+  return 1;
+}
+
+static int dip_handler_out(struct USBMAC *mac, uint8_t *rev_pkt, int size) {
+
+  (void)size;
+  mac->packet_type = packet_type_out;
+  usb_mac_parse_token_rev(mac, rev_pkt);
+  return 1;
+}
+
+static int dip_handler_setup(struct USBMAC *mac, uint8_t *rev_pkt, int size) {
+
+  (void)size;
+  mac->packet_type = packet_type_setup;
+  usb_mac_parse_token_rev(mac, rev_pkt);
+  return 1;
+}
+
+static int dip_handler_data(struct USBMAC *mac, uint8_t *rev_pkt, int size) {
 
   int data_copied, data_left;
   uint8_t *data;
 
+  /* Always ack data packets (ignoring crc, but oh well) */
+  usbSendAckI(mac);
+
+  data = mac->data_in;
+  data_left = size - 2; /* Ignore the two bytes of crc */
+  for (data_copied = 0; data_copied < size - 3; data_copied++)
+    data[data_copied] = bit_reverse_table_256[rev_pkt[data_left--]];
+  mac->data_in_size = data_copied;
+
+  return 0;
+}
+
+static int dip_handler_ign(struct USBMAC *mac, uint8_t *rev_pkt, int size) {
+
+  (void)rev_pkt;
+  (void)mac;
+  (void)size;
+
+  return 0;
+}
+
+static pidHandler dip_handlers[16] = {
+  [USB_DIP_IN & 0xf] = dip_handler_in,
+  [USB_DIP_OUT & 0xf] = dip_handler_out,
+  [USB_DIP_SETUP & 0xf] = dip_handler_setup,
+  [USB_DIP_DATA0 & 0xf] = dip_handler_data,
+  [USB_DIP_DATA1 & 0xf] = dip_handler_data,
+  [USB_DIP_ACK & 0xf] = dip_handler_ign,
+  [USB_DIP_NAK & 0xf] = dip_handler_ign,
+
+  [USB_DIP_SPLIT & 0xf] = dip_handler_ign,
+  [USB_DIP_PING & 0xf] = dip_handler_ign,
+  [USB_DIP_PRE & 0xf] = dip_handler_ign,
+  [USB_DIP_NYET & 0xf] = dip_handler_ign,
+  [USB_DIP_STALL & 0xf] = dip_handler_ign,
+  [USB_DIP_SOF & 0xf] = dip_handler_ign,
+  [USB_DIP_DATA2 & 0xf] = dip_handler_ign,
+  [USB_DIP_MDATA & 0xf] = dip_handler_ign,
+  [0xf] = dip_handler_ign,
+};
+
+
+int usbMacInsertRevI(struct USBMAC *mac, uint32_t *rev_pkt, int size) {
+
+  uint8_t dip = ((uint8_t *)rev_pkt)[size - 1]; /* reversed PID */
+
+  if (!isValidPID(dip))
+    return 0;
+
   /* Figure out if the packet we're processing is valid, and if we expect
    * more data to follow.
    */
-  switch (temp_packet[size - 1]) {
+  return dip_handlers[dip & 0xf](mac, (uint8_t *)rev_pkt, size);
+}
+#endif
 
-    case 0:
-      goto data_finished;
+static int usb_mac_send_data(struct USBMAC *mac, const void *data, int count) {
 
-    case USB_DIP_OUT:
-      mac->packet_type = packet_type_out;
-      usb_mac_parse_token(mac, temp_packet);
-      goto data_continues;
+  mac->data_out = data;
+  mac->data_out_left = count;
 
-    case USB_DIP_SETUP:
-      mac->packet_type = packet_type_setup;
-      usb_mac_parse_token(mac, temp_packet);
-      goto data_continues;
+  return 0;
+}
 
-    case USB_DIP_DATA0:
-    case USB_DIP_DATA1:
-      /* Always ack data packets (ignoring crc, but oh well) */
-      usb_send_ack_i(mac);
+static int usb_mac_process_setup(struct USBMAC *mac, const uint8_t packet[10]) {
 
-      data = mac->data_in;
-      data_left = size - 2; /* Ignore the two bytes of crc */
-      for (data_copied = 0; data_copied < size - 3; data_copied++)
-        data[data_copied] = bit_reverse_table_256[temp_packet[data_left--]];
-      mac->data_in_size = data_copied;
+  const struct usb_mac_setup_packet *setup;
+  setup = (const struct usb_mac_setup_packet *)packet;
 
-      goto data_continues;
+  switch (setup->bRequest) {
 
-    case USB_DIP_IN:
-      /* If there is no data currently, NAK The request so they will retry */
-      if ((!mac->data_out) || (!mac->data_out_left)) {
-        usb_send_nak_i(mac);
-        goto data_finished;
-      }
-      usb_mac_parse_token(mac, temp_packet);
-      usb_send_data_i(mac);
-      goto data_continues;
+    case 6: /* GET_DESCRIPTOR */
+      usb_mac_send_data(mac, mac->descriptor, sizeof(*mac->descriptor));
+      break;
 
     default:
-      last_pid = temp_packet[size - 1];
       break;
   }
 
-  return -1;
-
-data_continues:
-  /* Returning 0 causes the callee to immediately look for another packet */
-  return 0;
-
-data_finished:
-  /* Returning 1 indicates success, and the callee will process packets */
-  return 1;
-}
-
-int usbMacProcessNext(struct USBMAC *mac) {
-
   return 0;
 }
 
-const struct usb_packet *usbMacGetPacket(struct USBMAC *mac) {
+static inline void usb_mac_parse_token(struct USBMAC *mac,
+                                       const uint8_t packet[2]) {
 
-  return NULL;
+  mac->addr = packet[0] >> 1;
+  mac->epnum = (packet[1] >> 5) | ((packet[0] << 5) & 1);
 }
 
-int usbMacSendPacket(struct USBMAC *mac, const struct usb_packet *packet) {
-  uint8_t buffer[1 + 8 + 2]; /* PID + data + CRC-16 (worst-case) */
-  int buffer_size;
-  uint16_t crc16_calc;
+static void usb_mac_parse_data(struct USBMAC *mac,
+                               const uint8_t packet[10],
+                               uint32_t count) {
+  switch (mac->packet_type) {
 
-  memset(buffer, 0, sizeof(buffer));
-  buffer_size = -1;
-
-  switch (packet->pid) {
-  case USB_PID_MDATA:
-  case USB_PID_DATA2:
-  case USB_PID_DATA1:
-  case USB_PID_DATA0:
-    buffer[0] = packet->pid;
-    memcpy(buffer + 1, packet->data, packet->size);
-    crc16_calc = crc16(buffer + 1, packet->size, 0xffff, 0x8005);
-    buffer[9] = crc16_calc >> 8;
-    buffer[10] = crc16_calc;
-    buffer_size = 11;
+  case packet_type_setup:
+    usb_mac_process_setup(mac, packet);
     break;
 
-  /* Token packets, with CRC-5 */
-  case USB_PID_SETUP:
-  case USB_PID_SOF:
-  case USB_PID_IN:
-  case USB_PID_OUT:
-#warning "Implement CRC-5"
-    return -3;
+  case packet_type_in:
+
     break;
 
-  /* One-byte packets, no CRC required */
-  case USB_PID_STALL:
-  case USB_PID_NYET:
-  case USB_PID_NAK:
-  case USB_PID_ACK:
-    buffer[0] = packet->pid;
-    buffer_size = 1;
+  case packet_type_out:
+
     break;
 
-  /* Special cases (also no CRC?) */
-  case USB_PID_ERR:
-  case USB_PID_PING:
-  case USB_PID_SPLIT:
-    buffer[0] = packet->pid;
-    buffer_size = 1;
+  case packet_type_none:
     break;
 
   default:
-    return -1;
+    break;
   }
-
-  if (buffer_size < 0)
-    return -2;
-
-  return usbPhyQueue(mac->phy, buffer, buffer_size);
 }
 
-int usbMacProcess(struct USBMAC *mac) {
+int usbMacProcess(struct USBMAC *mac,
+                  const uint8_t packet[11],
+                  uint32_t count) {
 
-#if 0
-  usb_send_ack_i(mac);
-  while (mac->write_head != mac->read_head)
-    usbMacProcessNext(mac);
-#endif
+  switch(packet[0]) {
+  case USB_PID_SETUP:
+    mac->packet_type = packet_type_setup;
+    usb_mac_parse_token(mac, packet + 1);
+    break;
+
+  case USB_PID_DATA0:
+  case USB_PID_DATA1:
+    usb_mac_parse_data(mac, packet + 1, count - 1);
+    mac->packet_type = packet_type_none;
+    break;
+
+  default:
+    break;
+  }
+
+  /* Pre-process any data that's remaining, so it can be sent out
+   * in case an IN token comes.
+   */
+  usb_mac_process_data(mac);
+
   return 0;
 }
 
-void usbMacInit(struct USBMAC *mac, const char *usb_descriptor) {
-
-  uint32_t buffer[3];
+void usbMacInit(struct USBMAC *mac,
+                const struct usb_mac_device_descriptor *usb_descriptor) {
 
   usbMacResetStatistics(mac);
   mac->descriptor = usb_descriptor;
   mac->data_out = NULL;
   mac->data_out_left = 0;
-
-  buffer[0] = USB_PID_ACK;
-  usbPhyWritePrepare(&phyAck, buffer, 1);
-
-  buffer[0] = USB_PID_NAK;
-  usbPhyWritePrepare(&phyNak, buffer, 1);
 }
 
 void usbMacSetPhy(struct USBMAC *mac, struct USBPHY *phy) {

@@ -536,7 +536,7 @@ usb_phy_write_get_first_packet:
   mov wdnclrreg, wtmp1
   // 3
 
-  bl usb_phy_wait_5_cycles
+  //bl usb_phy_wait_5_cycles
 
   // usb start-of-frame header //
   /*bl usb_write_state_k // K state entered above already */
@@ -666,16 +666,22 @@ usb_phy_write_stuff_out:
   b usb_phy_write_done_stuffing_bit
 
 usb_write_eof:
+  bl usb_phy_wait_13_cycles
   bl usb_write_state_se0
   bl usb_write_state_se0
 
   /* Set J-state, as required by the spec */
+  bl usb_phy_wait_6_cycles
   mov wpaddr, wdpsetreg             // D+ set
   mov wnaddr, wdnclrreg             // D- clr
+  str wpmask, [wpaddr]
+  str wnmask, [wnaddr]
   /* Cheat a bit on the end-of-packet time, since the following
    * instructions take roughly 20 cycles before the lines reset.
+   *
+   * Disabled, because the line is not driven so it will drift.
    */
-  bl usb_phy_wait_12_cycles
+//  bl usb_phy_wait_12_cycles
 
   // --- Done Transmitting --- //
 

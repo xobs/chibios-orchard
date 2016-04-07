@@ -162,10 +162,8 @@ rdniaddr .req r12
   b usb_phy_read_timeout            // It never changed, so return "timeout".
 
 usb_phy_read_sync_wait:
-  // Wait until we're in the middle of a pulse.  When we get here, the pulse
-  // will have happened between 6 and 10 cycles ago.  Since the middle of a
-  // pulse occurs at 16 cycles, delay 8 cycles to line us up.
-//  bl usb_phy_wait_10_cycles
+  // Move us away from the start of the pulse, to avoid transition errors.
+  bl usb_phy_wait_5_cycles
 
   // Wait for the end-of-header sync pulse, which is when the value
   // repeats itself.  This is the "KK" in the KJKJKJKK training sequence.

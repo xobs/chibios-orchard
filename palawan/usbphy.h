@@ -3,33 +3,6 @@
 
 struct USBMAC;
 
-struct usb_phy_statistics {
-  int num_packets;
-  int errors;
-  int empty;
-  int overflow;
-  int timeout;
-  int no_end_of_sync;
-  int no_end_of_frame;
-  int out_read_head;
-  int out_write_head;
-  int out_buffer_size;
-//  uint32_t timestamps[512];
-//  uint32_t timestamp_count;
-//  uint32_t timestamp_mask;
-};
-
-#define BYTE_BUFFER_SIZE 0 + \
-                          + 1             /* PID */                           \
-                          + 8             /* Data */                          \
-                          + 2             /* CRC16 */                         \
-                          + 0
-
-#ifndef MAX_SEND_QUEUES
-#define MAX_SEND_QUEUES 16
-#define MAX_SEND_QUEUES_MASK 0xf
-#endif
-
 struct USBPHYInternalData {
   uint32_t padding[2];
   union {
@@ -90,7 +63,6 @@ struct USBPHY {
   uint8_t byte_queue_tail;
 } __attribute__((packed));
 
-const struct usb_phy_statistics *usbPhyGetStatistics(struct USBPHY *phy);
 int usbPhyResetStatistics(struct USBPHY *phy);
 
 void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac);
@@ -102,11 +74,6 @@ int usbProcessIncoming(struct USBPHY *phy);
 int usbPhyQueue(struct USBPHY *phy, const uint8_t *buffer, int buffer_size);
 int usbCapture(struct USBPHY *phy);
 int usbPhyInitialized(struct USBPHY *phy);
-int usbPhyWriteDirectI(struct USBPHY *phy, const uint32_t buffer[8], int size);
-int usbPhyWritePreparedI(struct USBPHY *phy,
-                         struct USBPHYInternalData *data);
-int usbPhyWritePrepared(struct USBPHY *phy,
-                        struct USBPHYInternalData *data);
 int usbPhyWritePrepare(struct USBPHY *phy,
                        const uint32_t buffer[3],
                        int size);

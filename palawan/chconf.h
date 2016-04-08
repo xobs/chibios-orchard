@@ -29,6 +29,7 @@
 #define _CHCONF_H_
 
 
+
 /*===========================================================================*/
 /**
  * @name System timers settings
@@ -484,6 +485,8 @@
  *          after processing the virtual timers queue.
  */
 #define CH_CFG_SYSTEM_TICK_HOOK() {                                         \
+  extern void usbPhyDrainIfNecessary(void);                                 \
+  usbPhyDrainIfNecessary();                                                 \
   /* System tick event code here.*/                                         \
 }
 

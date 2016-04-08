@@ -1,5 +1,5 @@
 /*
-    ChibiOS - Copyright (C) 2006..2015 Giovanni Di Sirio
+    ChibiOS - Copyright (C) 2013-2015 Fabio Utzig
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -77,13 +77,13 @@ static const SerialConfig default_config = {
  * @param[in] sdp       communication channel associated to the UART
  */
 static void serve_interrupt(SerialDriver *sdp) {
-  UART_TypeDef *u = sdp->uart;
+  UARTLP_TypeDef *u = sdp->uart;
 
   if (u->S1 & UARTx_S1_RDRF) {
     osalSysLockFromISR();
-    if (chIQIsEmptyI(&sdp->iqueue))
+    if (iqIsEmptyI(&sdp->iqueue))
       chnAddFlagsI(sdp, CHN_INPUT_AVAILABLE);
-    if (chIQPutI(&sdp->iqueue, u->D) < Q_OK)
+    if (iqPutI(&sdp->iqueue, u->D) < Q_OK)
       chnAddFlagsI(sdp, SD_OVERRUN_ERROR);
     osalSysUnlockFromISR();
   }
@@ -92,44 +92,26 @@ static void serve_interrupt(SerialDriver *sdp) {
     msg_t b;
 
     osalSysLockFromISR();
-    b = chOQGetI(&sdp->oqueue);
+    b = oqGetI(&sdp->oqueue);
     osalSysUnlockFromISR();
 
     if (b < Q_OK) {
       osalSysLockFromISR();
       chnAddFlagsI(sdp, CHN_OUTPUT_EMPTY);
       osalSysUnlockFromISR();
-      u->C2 &= ~UARTx_C2_TCIE;
+      u->C2 &= ~UARTx_C2_TIE;
     } else {
        u->D = b;
     }
   }
 
-  if (u->S1 & UARTx_S1_IDLE) {
-#if KINETIS_SERIAL_USE_UART0
-    if (sdp == &SD1)
-      u->S1 = UARTx_S1_IDLE;  // Clear IDLE (S1 bits are write-1-to-clear).
-    else
-#endif /* KINETIS_SERIAL_USE_UART0 */
-    {
-      (void)u->S1;
-      (void)u->D;
-    }
-  }
+  if (u->S1 & UARTx_S1_IDLE)
+    u->S1 = UARTx_S1_IDLE;  // Clear IDLE (S1 bits are write-1-to-clear).
 
   if (u->S1 & (UARTx_S1_OR | UARTx_S1_NF | UARTx_S1_FE | UARTx_S1_PF)) {
     // FIXME: need to add set_error()
     // Clear flags (S1 bits are write-1-to-clear).
-#if KINETIS_SERIAL_USE_UART0
-    if (sdp == &SD1)
-      u->S1 = UARTx_S1_OR | UARTx_S1_NF | UARTx_S1_FE | UARTx_S1_PF;
-    // Clear flags on other UART
-    else
-#endif
-    {
-      (void)u->S1;
-      (void)u->D;
-    }
+    u->S1 = UARTx_S1_OR | UARTx_S1_NF | UARTx_S1_FE | UARTx_S1_PF;
   }
 }
 
@@ -137,16 +119,16 @@ static void serve_interrupt(SerialDriver *sdp) {
  * @brief   Attempts a TX preload
  */
 static void preload(SerialDriver *sdp) {
-  UART_TypeDef *u = sdp->uart;
+  UARTLP_TypeDef *u = sdp->uart;
 
   if (u->S1 & UARTx_S1_TDRE) {
-    msg_t b = chOQGetI(&sdp->oqueue);
+    msg_t b = oqGetI(&sdp->oqueue);
     if (b < Q_OK) {
       chnAddFlagsI(sdp, CHN_OUTPUT_EMPTY);
       return;
     }
     u->D = b;
-    u->C2 |= UARTx_C2_TCIE;
+    u->C2 |= UARTx_C2_TIE;
   }
 }
 
@@ -181,50 +163,41 @@ static void notify3(io_queue_t *qp)
  * @brief   Common UART configuration.
  *
  */
-static void configure_uart(UART_TypeDef *uart, const SerialConfig *config)
+static void configure_uart(UARTLP_TypeDef *uart, const SerialConfig *config)
 {
   uint32_t uart_clock;
 
   uart->C1 = 0;
   uart->C3 = UARTx_C3_ORIE | UARTx_C3_NEIE | UARTx_C3_FEIE | UARTx_C3_PEIE;
-#if KINETIS_SERIAL_USE_UART0
-  if (uart == UART1)
-    uart->S1 = UARTx_S1_IDLE | UARTx_S1_OR | UARTx_S1_NF | UARTx_S1_FE | UARTx_S1_PF;
-  else
-#endif /* KINETIS_SERIAL_USE_UART0 */
-  {
-    (void)uart->S1;
-    (void)uart->D;
-  }
+  uart->S1 = UARTx_S1_IDLE | UARTx_S1_OR | UARTx_S1_NF | UARTx_S1_FE | UARTx_S1_PF;
   while (uart->S1 & UARTx_S1_RDRF) {
     (void)uart->D;
   }
 
 #if KINETIS_SERIAL_USE_UART0
-    if (uart == UART0) {
+    if (uart == (UARTLP_TypeDef *)UART0) {
         /* UART0 can be clocked from several sources. */
         uart_clock = KINETIS_UART0_CLOCK_FREQ;
     }
 #endif
 #if KINETIS_SERIAL_USE_UART1
-    if (uart == UART1) {
+    if (uart == (UARTLP_TypeDef *)UART1) {
         uart_clock = KINETIS_BUSCLK_FREQUENCY;
     }
 #endif
 #if KINETIS_SERIAL_USE_UART2
-    if (uart == UART2) {
+    if (uart == (UARTLP_TypeDef *)UART2) {
         uart_clock = KINETIS_BUSCLK_FREQUENCY;
     }
 #endif
 
   /* FIXME: change fixed OSR = 16 to dynamic value based on baud */
   uint16_t divisor = (uart_clock / 16) / config->sc_speed;
-  //uart->C4 = UARTx_C4_OSR & (16 - 1);
+  //uart->C4 = UARTx_C4_OSR & (16 - 1); /* Causes a HardFault for some reason */
   uart->BDH = (divisor >> 8) & UARTx_BDH_SBR;
   uart->BDL = (divisor & UARTx_BDL_SBR);
 
   uart->C2 = UARTx_C2_RE | UARTx_C2_RIE | UARTx_C2_TE;
-  (void)uart->S1;
 }
 
 /*===========================================================================*/
@@ -232,29 +205,29 @@ static void configure_uart(UART_TypeDef *uart, const SerialConfig *config)
 /*===========================================================================*/
 
 #if KINETIS_SERIAL_USE_UART0 || defined(__DOXYGEN__)
-CH_IRQ_HANDLER(Vector70) {
+OSAL_IRQ_HANDLER(Vector70) {
 
-  CH_IRQ_PROLOGUE();
+  OSAL_IRQ_PROLOGUE();
   serve_interrupt(&SD1);
-  CH_IRQ_EPILOGUE();
+  OSAL_IRQ_EPILOGUE();
 }
 #endif
 
 #if KINETIS_SERIAL_USE_UART1 || defined(__DOXYGEN__)
-CH_IRQ_HANDLER(Vector74) {
+OSAL_IRQ_HANDLER(Vector74) {
 
-  CH_IRQ_PROLOGUE();
+  OSAL_IRQ_PROLOGUE();
   serve_interrupt(&SD2);
-  CH_IRQ_EPILOGUE();
+  OSAL_IRQ_EPILOGUE();
 }
 #endif
 
 #if KINETIS_SERIAL_USE_UART2 || defined(__DOXYGEN__)
-CH_IRQ_HANDLER(Vector78) {
+OSAL_IRQ_HANDLER(Vector78) {
 
-  CH_IRQ_PROLOGUE();
+  OSAL_IRQ_PROLOGUE();
   serve_interrupt(&SD3);
-  CH_IRQ_EPILOGUE();
+  OSAL_IRQ_EPILOGUE();
 }
 #endif
 
@@ -272,19 +245,19 @@ void sd_lld_init(void) {
 #if KINETIS_SERIAL_USE_UART0
   /* Driver initialization.*/
   sdObjectInit(&SD1, NULL, notify1);
-  SD1.uart = UART0;
+  SD1.uart = (UARTLP_TypeDef *)UART0;
 #endif
 
 #if KINETIS_SERIAL_USE_UART1
   /* Driver initialization.*/
   sdObjectInit(&SD2, NULL, notify2);
-  SD2.uart = UART1;
+  SD2.uart = (UARTLP_TypeDef *)UART1;
 #endif
 
 #if KINETIS_SERIAL_USE_UART2
   /* Driver initialization.*/
   sdObjectInit(&SD3, NULL, notify3);
-  SD3.uart = UART2;
+  SD3.uart = (UARTLP_TypeDef *)UART2;
 #endif
 }
 

@@ -1,5 +1,5 @@
 /*
-    ChibiOS - Copyright (C) 2006..2015 Giovanni Di Sirio
+    ChibiOS - Copyright (C) 2013-2015 Fabio Utzig
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@
 */
 
 /**
- * @file    KL1x/serial_lld.h
- * @brief   Kinetis KL1x Serial Driver subsystem low level driver header.
+ * @file    KL2x/serial_lld.h
+ * @brief   Kinetis KL2x Serial Driver subsystem low level driver header.
  *
  * @addtogroup SERIAL
  * @{
@@ -124,7 +124,7 @@ typedef struct {
   uint8_t                   ob[SERIAL_BUFFERS_SIZE];                        \
   /* End of the mandatory fields.*/                                         \
   /* Pointer to the UART registers block.*/                                 \
-  UART_TypeDef            *uart;
+  UARTLP_TypeDef            *uart;
 
 /*===========================================================================*/
 /* Driver macros.                                                            */

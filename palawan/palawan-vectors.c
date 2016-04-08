@@ -1,4 +1,3 @@
-#include "ch.h"
 #include "hal.h"
 
 #include <stdint.h>
@@ -76,6 +75,7 @@ void UsageFault_Handler(void) {
 uintptr_t __stack_chk_guard = 0x12345678;
 __attribute__((noreturn))
 void __stack_chk_fail(void) {
-  chSysHalt("Stack check fail");
+  //chSysHalt("Stack check fail");
+  asm("bkpt #0");
   while(1);
 }

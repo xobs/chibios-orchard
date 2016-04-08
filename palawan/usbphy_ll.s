@@ -124,6 +124,21 @@ rdniaddr .req r12
 
 .func usbPhyReadI
 .global usbPhyReadI
+
+usb_phy_read_se0:
+  ldr r2, [rusbphy, #spSave]
+  mov sp, r2
+
+  pop {r2-r5}
+  mov r8, r2
+  mov r9, r3
+  mov r10, r4
+  mov r11, r5
+
+  mov r0, #0
+  sub r0, r0, #4
+  pop {r4,r5,r6,r7,pc}
+
 /*int */usbPhyReadI/*(const USBPHY *phy, uint8_t samples[12])*/:
   push {r4,r5,r6,r7,lr}
   mov r2, r8
@@ -145,10 +160,19 @@ rdniaddr .req r12
   ldr rreg, [rusbphy, #dnIAddr]     // Grab the address for the data input reg.
   ldr rmash, [rusbphy, #dnMask]     // Grab the mask for the bit.
 
+  ldr rsample1, [rusbphy, #dpIAddr] // Also grab D+ address
+  ldr rsample2, [rusbphy, #dpMask]  // And D+ mask
+
   /* Wait for the line to flip */
-  ldr rval, [rreg]                  // Sample D+, to watch for it flipping
+  ldr rval, [rreg]                  // Sample D-, to watch for it flipping
+  ldr rsample3, [rsample1]          // Sample D- at the same time
   and rval, rval, rmash             // Mask off the interesting bit
   mov rlastval, rval                // Save the bit for use in looking for sync
+
+  /* Check to see if it's SE0, in which case this is a keepalive pkt */
+  and rsample3, rsample2            // Mask off the interesting bit
+  add rsample3, rval                // Combine D+ and D-.
+  beq usb_phy_read_se0              // Exit if SE0 condition (both are 0).
 
   // The loop is 4 cycles on a failure.  One
   // pulse is 32 cycles.  Therefore, loop up
@@ -677,9 +701,10 @@ usb_write_eof:
   /* Cheat a bit on the end-of-packet time, since the following
    * instructions take roughly 20 cycles before the lines reset.
    *
-   * Disabled, because the line is not driven so it will drift.
+   * Disabled, because the line is not driven so it will drift
+   * slowly enough that it doesn't matter.
    */
-//  bl usb_phy_wait_12_cycles
+  bl usb_phy_wait_12_cycles
 
   // --- Done Transmitting --- //
 

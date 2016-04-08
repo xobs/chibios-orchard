@@ -1,11 +1,10 @@
 #ifndef __PALAWAN_SHELL_H__
 #define __PALAWAN_SHELL_H__
 
-#include "ch.h"
 #include "hal.h"
 #include "chprintf.h"
-#include "shell.h"
 #include "palawan.h"
+#include "shell.h"
 
 void palawanShellInit(void);
 void palawanShellRestart(void);

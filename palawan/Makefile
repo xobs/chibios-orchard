@@ -82,12 +82,17 @@ include $(CHIBIOS)/os/common/ports/ARMCMx/compilers/GCC/mk/startup_kl1x.mk
 include $(CHIBIOS)/os/hal/hal.mk
 include $(CHIBIOS)/os/hal/ports/KINETIS/KL1x/platform.mk
 include $(CHIBIOS)/os/hal/boards/KOSAGI_KW01_PALAWAN/board.mk
-include $(CHIBIOS)/os/hal/osal/rt/osal.mk
+# OSAL files (for OS-less operation)
+
+# Include either ChibiOS/RT or OSAL (OS-less)
+ifeq ($(CH_USE_RT),)
+include $(CHIBIOS)/os/hal/osal/os-less/ARMCMx/osal.mk
+else
 # RTOS files (optional).
+include $(CHIBIOS)/os/hal/osal/rt/osal.mk
 include $(CHIBIOS)/os/rt/rt.mk
 include $(CHIBIOS)/os/rt/ports/ARMCMx/compilers/GCC/mk/port_v6m.mk
-# Other files (optional).
-include $(CHIBIOS)/test/rt/test.mk
+endif
 
 # Define linker script file here
 LDSCRIPT= $(STARTUPLD)/KL16Z128.ld
@@ -102,7 +107,6 @@ CSRC = main.c \
        usbphy.c \
        usbmac.c \
        hex.c \
-       $(wildcard cmd-*.c) \
        $(STARTUPSRC) \
        $(PORTSRC) \
        $(KERNSRC) \
@@ -112,7 +116,12 @@ CSRC = main.c \
        $(BOARDSRC) \
        $(CHIBIOS)/os/hal/lib/streams/chprintf.c \
        $(CHIBIOS)/os/hal/lib/streams/memstreams.c \
-       $(CHIBIOS)/os/various/shell.c \
+
+# Include the shell, and commands, for full OS.
+ifneq ($(CH_USE_RT),)
+CSRC += $(CHIBIOS)/os/various/shell.c \
+        $(wildcard cmd-*.c-off)
+endif
 
 # C++ sources that can be compiled in ARM or THUMB mode depending on the global
 # setting.

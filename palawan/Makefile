@@ -3,6 +3,8 @@
 # NOTE: Can be overridden externally.
 #
 
+CH_USE_RT=TRUE
+
 # Compiler options here.
 ifeq ($(USE_OPT),)
   USE_OPT = -O2 -ggdb -fomit-frame-pointer -falign-functions=16 -nostdlib -fstack-protector
@@ -120,7 +122,7 @@ CSRC = main.c \
 # Include the shell, and commands, for full OS.
 ifneq ($(CH_USE_RT),)
 CSRC += $(CHIBIOS)/os/various/shell.c \
-        $(wildcard cmd-*.c-off)
+        $(wildcard cmd-*.c)
 endif
 
 # C++ sources that can be compiled in ARM or THUMB mode depending on the global

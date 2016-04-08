@@ -51,26 +51,6 @@ struct usb_packet {
   /* Checksum omitted */
 } __attribute__((packed));
 
-struct usb_mac_statistics {
-  int num_packets;
-  int errors;
-  int underflow;
-  int overflow;
-  int crc5_errors;
-  int crc16_errors;
-  int illegal_pids;
-  int empty_packets;
-  int big_packets;
-  int read_head;
-  int write_head;
-  int buffer_size;
-};
-
-enum usb_state {
-  state_rx,
-  state_tx,
-};
-
 enum usb_mac_packet_type {
   packet_type_none,
   packet_type_setup,
@@ -81,60 +61,45 @@ enum usb_mac_packet_type {
 struct usb_mac_setup_packet {
   uint8_t bmRequestType;
   uint8_t bRequest;
-  uint16_t wValue;
+  union {
+    uint16_t wValue;
+    struct {
+      uint8_t wValueH;
+      uint8_t wValueL;
+    };
+  };
   uint16_t wIndex;
   uint16_t wLength;
 } __attribute__((packed));
 
-struct usb_mac_device_descriptor {
-  uint8_t bLength;
-  uint8_t bDescriptorType;
-  uint16_t bcdUSB;
-  uint8_t bDeviceClass;
-  uint8_t bDeviceSubClass;
-  uint8_t bDeviceProtocol;
-  uint8_t bMaxPacketSize0;
-  uint16_t idVendor;
-  uint16_t idProduct;
-  uint16_t bcdDevice;
-  uint8_t iManufacturer;
-  uint8_t iProduct;
-  uint8_t iSerialNumber;
-  uint8_t bNumConfigurations;
-} __attribute__((packed));
-
 struct USBMAC {
   struct USBPHY *phy;
-  const struct usb_mac_device_descriptor *descriptor;
+  const struct usb_device_descriptor *device_descriptor;
+  const struct usb_configuration_descriptor *configuration_descriptor;
   int phy_internal_is_ready;
 
-  uint8_t data_buffer;  /* Whether we're sending DATA0 or DATA1 */
-  uint8_t packet_type;  /* PACKET_SETUP, PACKET_IN, or PACKET_OUT */
-
-  uint8_t addr;
-  uint8_t epnum;
-  
   union {
     uint8_t data_in[8];
     struct usb_mac_setup_packet data_setup;
   };
 
-  const uint8_t *data_out;
-  uint32_t data_out_left;
+  const void *data_out;
+  int32_t data_out_left;
 
   /* Data that's ready to be sent */
   struct USBPHYInternalData phy_internal;
 
   char data_in_size;
 
-  struct usb_mac_statistics stats;
+  uint8_t data_buffer;  /* Whether we're sending DATA0 or DATA1 */
+  uint8_t packet_type;  /* PACKET_SETUP, PACKET_IN, or PACKET_OUT */
+
+  uint8_t address;      /* Our configured address */
+  uint8_t config_num;   /* Currently-selected configuration */
+
+  uint8_t tok_addr;     /* Last token's address */
+  uint8_t tok_epnum;    /* Last token's endpoint */
 };
-
-/* Return the statistics from this MAC */
-const struct usb_mac_statistics *usbMacGetStatistics(struct USBMAC *mac);
-
-/* Reset the statistics for this particular MAC */
-int usbMacResetStatistics(struct USBMAC *mac);
 
 /* Insert a new packet, received on the wire, into the USB MAC layer.
    Return value:
@@ -164,7 +129,8 @@ int usbMacSendPacket(struct USBMAC *mac, const struct usb_packet *packet);
 
 /* Initialize the given USB MAC */
 void usbMacInit(struct USBMAC *mac,
-                const struct usb_mac_device_descriptor *usb_descriptor);
+                const struct usb_device_descriptor *device_descriptor,
+                const struct usb_configuration_descriptor *config);
 
 /* Set the given MAC to use the given PHY */
 void usbMacSetPhy(struct USBMAC *mac, struct USBPHY *phy);

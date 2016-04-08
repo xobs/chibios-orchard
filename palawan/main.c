@@ -113,8 +113,8 @@ static void print_mcu_info(void) {
 int loop_counter = 0;
 int last_ret;
 
-static const struct usb_mac_device_descriptor usb_device_descriptor = {
-  .bLength = sizeof(struct usb_mac_device_descriptor),
+static const struct usb_device_descriptor usb_device_descriptor = {
+  .bLength = sizeof(struct usb_device_descriptor),
   .bDescriptorType = DT_DEVICE,       /* DEVICE */
   .bcdUSB = 0x0200,           /* USB 2.0 */
   .bDeviceClass = 0x00,
@@ -131,10 +131,10 @@ static const struct usb_mac_device_descriptor usb_device_descriptor = {
 };
 
 
-static const struct usb_mac_configuration_descriptor usb_config_descriptor = {
-  .bLength = sizeof(struct usb_mac_configuration_descriptor),
+static const struct usb_configuration_descriptor usb_config_descriptor = {
+  .bLength = sizeof(struct usb_configuration_descriptor),
   .bDescriptorType = DT_CONFIGURATION,
-  .wTotalLength = sizeof(struct usb_mac_configuration_descriptor)
+  .wTotalLength = sizeof(struct usb_configuration_descriptor)
                 + sizeof(struct usb_interface_descriptor)
                 + sizeof(struct usb_hid_descriptor)
                 + sizeof(struct usb_endpoint_descriptor),

@@ -14,6 +14,7 @@
     limitations under the License.
 */
 
+#include "osal.h"
 #include "shell.h"
 #include "chprintf.h"
 

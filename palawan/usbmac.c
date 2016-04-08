@@ -142,21 +142,6 @@ const char *usbPidToStr(uint8_t pid) {
   }
 }
 
-int usbMacResetStatistics(struct USBMAC *mac) {
-
-  /* Reset all stats to 0, except buffer size */
-  memset(&mac->stats, 0, sizeof(mac->stats));
-
-  return 0;
-}
-
-const struct usb_mac_statistics *usbMacGetStatistics(struct USBMAC *mac) {
-
-  if (!mac)
-    return NULL;
-  return &mac->stats;
-}
-
 static int usb_mac_send_data(struct USBMAC *mac, const void *data, int count) {
 
   /* Don't allow for dereferencing NULL pointers.  Probably an uninteresting
@@ -393,6 +378,8 @@ static inline void usb_mac_parse_token(struct USBMAC *mac,
 static void usb_mac_parse_data(struct USBMAC *mac,
                                const uint8_t packet[10],
                                uint32_t count) {
+  (void)count;
+
   switch (mac->packet_type) {
 
   case packet_type_setup:
@@ -450,10 +437,9 @@ int usbMacProcess(struct USBMAC *mac,
 }
 
 void usbMacInit(struct USBMAC *mac,
-                const struct usb_mac_device_descriptor *device_descriptor,
-                const struct usb_mac_configuration_descriptor *config) {
+                const struct usb_device_descriptor *device_descriptor,
+                const struct usb_configuration_descriptor *config) {
 
-  usbMacResetStatistics(mac);
   mac->device_descriptor = device_descriptor;
   mac->configuration_descriptor = config;
   mac->data_out = NULL;

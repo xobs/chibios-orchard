@@ -14,15 +14,14 @@
     limitations under the License.
 */
 
-#include "ch.h"
 #include "hal.h"
 #include "i2c.h"
 #include "spi.h"
 
-#include "shell.h"
 #include "chprintf.h"
 #include "usbphy.h"
 #include "usbmac.h"
+#include "usblink.h"
 
 #include "palawan.h"
 #include "palawan-events.h"
@@ -114,24 +113,82 @@ static void print_mcu_info(void) {
 int loop_counter = 0;
 int last_ret;
 
-struct usb_mac_device_descriptor usb_device_descriptor = {
+static const struct usb_mac_device_descriptor usb_device_descriptor = {
   .bLength = sizeof(struct usb_mac_device_descriptor),
-  .bDescriptorType = 1, /* DEVICE */
-  .bcdUSB = 0x0200, /* USB 2.0 */
+  .bDescriptorType = DT_DEVICE,       /* DEVICE */
+  .bcdUSB = 0x0200,           /* USB 2.0 */
   .bDeviceClass = 0x00,
   .bDeviceSubClass = 0x00,
   .bDeviceProtocol = 0x00,
-  .bMaxPacketSize0 = 0x08, /* 8-byte packets max */
+  .bMaxPacketSize0 = 0x08,    /* 8-byte packets max */
   .idVendor = 0x1bcf,
   .idProduct = 0x05ce,
-  .bcdDevice = 0x1000,  /* Device release 1.0 */
-  .iManufacturer = 0x00,
-  .iProduct = 0x02,
-  .iSerialNumber = 0x00,
+  .bcdDevice = 0xa014,        /* Device release 1.0 */
+  .iManufacturer = 0x00,      /* No manufacturer string */
+  .iProduct = 0x02,           /* Product name in string #2 */
+  .iSerialNumber = 0x00,      /* No serial number */
   .bNumConfigurations = 0x01,
 };
 
-extern void usbPhyTime(int, int);
+
+static const struct usb_mac_configuration_descriptor usb_config_descriptor = {
+  .bLength = sizeof(struct usb_mac_configuration_descriptor),
+  .bDescriptorType = DT_CONFIGURATION,
+  .wTotalLength = sizeof(struct usb_mac_configuration_descriptor)
+                + sizeof(struct usb_interface_descriptor)
+                + sizeof(struct usb_hid_descriptor)
+                + sizeof(struct usb_endpoint_descriptor),
+  .bNumInterfaces = 1,
+  .bConfigurationValue = 1,
+  .iConfiguration = 0,
+  .bmAttributes = 0xa0,
+  .bMaxPower = 0x17,
+  .data = {
+    /* struct usb_interface_descriptor { */
+    /*  uint8_t bLength;            */ sizeof(struct usb_interface_descriptor),
+    /*  uint8_t bDescriptorType;    */ DT_INTERFACE,
+    /*  uint8_t bInterfaceNumber;   */ 0,
+    /*  uint8_t bAlternateSetting;  */ 0,
+    /*  uint8_t bNumEndpoints;      */ 1, /* One additional EP */
+    /*  uint8_t bInterfaceClass;    */ 3, /* HID class */
+    /*  uint8_t bInterfaceSubclass; */ 1, /* Boot Device subclass */
+    /*  uint8_t bInterfaceProtocol; */ 1, /* 1 == keyboard, 2 == mouse */
+    /*  uint8_t iInterface;         */ 0,
+    /* }*/
+
+    /* struct usb_hid_descriptor {        */
+    /*  uint8_t  bLength;                 */ sizeof(struct usb_hid_descriptor),
+    /*  uint8_t  bDescriptorType;         */ DT_HID,
+    /*  uint16_t bcdHID;                  */ 0x00, 0x01,
+    /*  uint8_t  bCountryCode;            */ 0,
+    /*  uint8_t  bNumDescriptors;         */ 1, /* We have only one REPORT */
+    /*  uint8_t  bReportDescriptorType;   */ DT_HID_REPORT,
+    /*  uint16_t wReportDescriptorLength; */ 32, 0x00,
+    /* }                                  */
+
+    /* struct usb_endpoint_descriptor { */
+    /*  uint8_t  bLength;             */ sizeof(struct usb_endpoint_descriptor),
+    /*  uint8_t  bDescriptorType;     */ DT_ENDPOINT,
+    /*  uint8_t  bEndpointAddress;    */ 0x81,  /* EP1 (IN) */
+    /*  uint8_t  bmAttributes;        */ 3,     /* Interrupt */
+    /*  uint16_t wMaxPacketSize;      */ 0x08, 0x00,
+    /*  uint8_t  bInterval;           */ 10, /* Every 10 ms */
+    /* }                              */
+  },
+
+  /*
+         0x09 DT_CONFIGURATION 0x3B 0x00 0x02 0x01 0x00 0xA0 0x17
+
+         0x09 DT_INTERFACE 0x00 0x00 0x01 0x03 0x01 0x01 0x00
+         0x09 DT_HID 0x00 0x01 0x00 0x01 0x22 0x41 0x00
+         0x07 DT_ENDPOINT 0x81 0x03 0x08 0x00 0x0A
+
+         0x09 DT_INTERFACE 0x01 0x00 0x01 0x03 0x01 0x02 0x00
+         0x09 DT_HID 0x00 0x01 0x00 0x01 0x22 0xB3 0x00
+         0x07 DT_ENDPOINT 0x82 0x03 0x08 0x00 0x0A
+  */
+};
+
 int main(void)
 {
   evtTableInit(palawan_events, 32);
@@ -140,33 +197,38 @@ int main(void)
    * System initializations.
    * - HAL initialization, this also initializes the configured device drivers
    *   and performs the board-specific initializations.
-   * - Kernel initialization, the main() function becomes a thread and the
-   *   RTOS is active.
    */
   halInit();
   chSysInit();
 
 #if 0
+    osalSysLock();
   while (1) {
-    chSysLock();
     *((volatile uint32_t *)0xf80000cc) = 0x80; /* Toggle green LED */
     usbPhyWriteTest(usbPhyTestPhy());
-    chSysUnlock();
-    chThdSleepMilliseconds(1000);
+//    chThdSleepMilliseconds(1000);
+    int i;
+    for (i = 0; i < 1000; i++)
+      asm("nop");
   }
+    osalSysUnlock();
 #endif
 
 #if 1
   {
-    int i;
-    for (i = 0; i < CORTEX_NUM_VECTORS; i++)
-      NVIC_SetPriority(i, 3);
+    NVIC_SetPriority(SVCall_IRQn, 1);
     NVIC_SetPriority(PendSV_IRQn, 1);
+    NVIC_SetPriority(SysTick_IRQn, 1);
+    int i;
+    for (i = 0; i < CORTEX_NUM_VECTORS; i++) {
+      if (NVIC_GetPriority(i) == 0)
+        NVIC_SetPriority(i, 3);
+    }
     NVIC_SetPriority(PINA_IRQn, 0);
   }
 #endif
 
-  usbMacInit(usbMacDefault(), &usb_device_descriptor);
+  usbMacInit(usbMacDefault(), &usb_device_descriptor, &usb_config_descriptor);
   usbPhyInit(usbPhyDefaultPhy(), usbMacDefault());
 
   palawanEventsStart();
@@ -179,8 +241,18 @@ int main(void)
   spiStart(&SPID2, &spi_config);
 
   evtTableHook(palawan_events, shell_terminated, shell_termination_handler);
-
   palawanShellRestart();
+
+  /*
+  int i;
+  for (i = 0; i < 100000; i++)
+    asm("nop");
+  usbPhyAttach(usbPhyDefaultPhy());
+  while (1) {
+    extern void usbPhyWorker(struct USBPHY *phy);
+    usbPhyWorker(usbPhyDefaultPhy());
+  }
+  */
 
   while (TRUE)
     chEvtDispatch(evtHandlers(palawan_events), chEvtWaitOne(ALL_EVENTS));

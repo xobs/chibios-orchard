@@ -14,7 +14,6 @@
     limitations under the License.
 */
 
-#include "ch.h"
 #include "shell.h"
 #include "chprintf.h"
 

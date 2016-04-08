@@ -195,7 +195,11 @@
  * @brief   Enables the mutual exclusion APIs on the I2C bus.
  */
 #if !defined(I2C_USE_MUTUAL_EXCLUSION) || defined(__DOXYGEN__)
+#if (CH_CFG_USE_MUTEXES == TRUE)
 #define I2C_USE_MUTUAL_EXCLUSION    TRUE
+#else
+#define I2C_USE_MUTUAL_EXCLUSION    FALSE
+#endif
 #endif
 
 /*===========================================================================*/

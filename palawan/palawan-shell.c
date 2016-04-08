@@ -14,9 +14,7 @@
     limitations under the License.
 */
 
-#include "ch.h"
 #include "hal.h"
-#include "shell.h"
 #include "palawan.h"
 #include "palawan-shell.h"
 
@@ -29,9 +27,6 @@ static const SerialConfig serialConfig = {
   115200,
 };
 
-static thread_t *shell_tp = NULL;
-static THD_WORKING_AREA(waShellThread, 768);
-
 void palawanShellInit(void)
 {
   sdStart(serialDriver, &serialConfig);
@@ -39,6 +34,9 @@ void palawanShellInit(void)
 
   shellInit();
 }
+
+static thread_t *shell_tp = NULL;
+static THD_WORKING_AREA(waShellThread, 768);
 
 void palawanShellRestart(void)
 {

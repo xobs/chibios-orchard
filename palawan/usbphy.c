@@ -295,6 +295,7 @@ void usbPhyWorker(struct USBPHY *phy) {
   return;
 }
 
+#if (CH_USE_RT == TRUE)
 static THD_FUNCTION(usb_worker_thread, arg) {
 
   struct USBPHY *phy = arg;
@@ -312,6 +313,7 @@ static THD_FUNCTION(usb_worker_thread, arg) {
 
   return;
 }
+#endif
 
 void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac) {
 
@@ -326,21 +328,23 @@ void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac) {
 
   phy->mac = mac;
   usbMacSetPhy(mac, phy);
-  chEvtObjectInit(&phy->data_available);
   phy->initialized = 1;
   usbPhyDetach(phy);
+#if (CH_USE_RT == TRUE)
+  chEvtObjectInit(&phy->data_available);
   chThdCreateStatic(phy->waThread, sizeof(phy->waThread),
                     HIGHPRIO, usb_worker_thread, phy);
+#endif
 }
 
+#if (CH_USE_RT == TRUE)
 void usbPhyDrainIfNecessary(void) {
   struct USBPHY *phy = &defaultUsbPhy;
 
   if (phy->byte_queue_tail != phy->byte_queue_head)
     osalThreadResumeI(&(phy)->thread, MSG_OK);
 }
-
-
+#endif
 
 struct USBPHY *usbPhyDefaultPhy(void) {
 

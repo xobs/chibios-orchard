@@ -24,6 +24,7 @@
    }
  */
 
+#if (CH_USE_RT == TRUE)
 struct evt_table {
   int size;
   int next;
@@ -65,6 +66,12 @@ struct evt_table {
 
 #define evtListeners(table)                                                 \
     table.listeners
+
+#else /* CH_USE_RT == TRUE */
+#define evtTableInit(table, capacity)
+#define evtTableHook(table, event, callback)
+#define evtTableUnhook(table, event, callback)
+#endif /* CH_USE_RT != TRUE */
 
 void palawanEventsStart(void);
 

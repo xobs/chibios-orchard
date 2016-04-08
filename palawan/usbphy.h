@@ -53,10 +53,11 @@ struct USBPHY {
   struct USBPHYInternalData queued_data;
   int data_is_queued;
 
+#if (CH_USE_RT == TRUE)
   thread_reference_t thread;
   THD_WORKING_AREA(waThread, 128);
-
   event_source_t data_available;
+#endif
 
   uint32_t byte_queue[256][3];
   uint8_t byte_queue_head;

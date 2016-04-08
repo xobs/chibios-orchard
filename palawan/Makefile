@@ -3,11 +3,14 @@
 # NOTE: Can be overridden externally.
 #
 
-CH_USE_RT=TRUE
+#CH_USE_RT=TRUE
+ifeq ($(CH_USE_RT),)
+  CH_USE_RT=FALSE
+endif
 
 # Compiler options here.
 ifeq ($(USE_OPT),)
-  USE_OPT = -O2 -ggdb -fomit-frame-pointer -falign-functions=16 -nostdlib -fstack-protector
+  USE_OPT = -O2 -ggdb -fomit-frame-pointer -falign-functions=16 -nostdlib -fstack-protector -DCH_USE_RT=$(CH_USE_RT)
 endif
 
 # C specific options here (added to USE_OPT).
@@ -87,13 +90,13 @@ include $(CHIBIOS)/os/hal/boards/KOSAGI_KW01_PALAWAN/board.mk
 # OSAL files (for OS-less operation)
 
 # Include either ChibiOS/RT or OSAL (OS-less)
-ifeq ($(CH_USE_RT),)
-include $(CHIBIOS)/os/hal/osal/os-less/ARMCMx/osal.mk
-else
+ifeq ($(CH_USE_RT),TRUE)
 # RTOS files (optional).
 include $(CHIBIOS)/os/hal/osal/rt/osal.mk
 include $(CHIBIOS)/os/rt/rt.mk
 include $(CHIBIOS)/os/rt/ports/ARMCMx/compilers/GCC/mk/port_v6m.mk
+else
+include $(CHIBIOS)/os/hal/osal/os-less/ARMCMx/osal.mk
 endif
 
 # Define linker script file here
@@ -120,7 +123,7 @@ CSRC = main.c \
        $(CHIBIOS)/os/hal/lib/streams/memstreams.c \
 
 # Include the shell, and commands, for full OS.
-ifneq ($(CH_USE_RT),)
+ifeq ($(CH_USE_RT),TRUE)
 CSRC += $(CHIBIOS)/os/various/shell.c \
         $(wildcard cmd-*.c)
 endif

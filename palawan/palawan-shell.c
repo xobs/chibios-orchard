@@ -21,7 +21,11 @@
 /* Global stream variable, lets modules use chprintf().*/
 void *stream;
 
+#if (CH_USE_RT == TRUE)
 palawan_command_end();
+static thread_t *shell_tp = NULL;
+static THD_WORKING_AREA(waShellThread, 768);
+#endif
 
 static const SerialConfig serialConfig = {
   115200,
@@ -32,14 +36,14 @@ void palawanShellInit(void)
   sdStart(serialDriver, &serialConfig);
   stream = stream_driver;
 
+#if (CH_USE_RT == TRUE)
   shellInit();
+#endif
 }
-
-static thread_t *shell_tp = NULL;
-static THD_WORKING_AREA(waShellThread, 768);
 
 void palawanShellRestart(void)
 {
+#if (CH_USE_RT == TRUE)
   static ShellConfig shellConfig;
   static const ShellCommand *shellCommands;
 
@@ -54,4 +58,5 @@ void palawanShellRestart(void)
 
   shell_tp = shellCreateStatic(&shellConfig, waShellThread,
                               sizeof(waShellThread), NORMALPRIO - 5);
+#endif
 }

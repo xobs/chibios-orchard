@@ -29,8 +29,6 @@
 
 #include "string.h"
 
-struct evt_table palawan_events;
-
 uint8_t pee_pbe(void);
 uint8_t pbe_fbe(void);
 int32_t fll_freq(int32_t fll_ref);
@@ -45,6 +43,9 @@ static const SPIConfig spi_config = {
   0,
 };
 
+#if (CH_USE_RT == TRUE)
+struct evt_table palawan_events;
+
 static void shell_termination_handler(eventid_t id) {
   static int i = 1;
   (void)id;
@@ -52,6 +53,7 @@ static void shell_termination_handler(eventid_t id) {
   chprintf(stream, "\r\nRespawning shell (shell #%d, event %d)\r\n", ++i, id);
   palawanShellRestart();
 }
+#endif
 
 /*
 static void default_radio_handler(uint8_t type, uint8_t src, uint8_t dst,
@@ -191,7 +193,9 @@ static const struct usb_configuration_descriptor usb_config_descriptor = {
 
 int main(void)
 {
+#if (CH_USE_RT == TRUE)
   evtTableInit(palawan_events, 32);
+#endif
 
   /*
    * System initializations.
@@ -199,7 +203,9 @@ int main(void)
    *   and performs the board-specific initializations.
    */
   halInit();
+#if (CH_USE_RT == TRUE)
   chSysInit();
+#endif
 
 #if 0
     osalSysLock();
@@ -214,7 +220,7 @@ int main(void)
     osalSysUnlock();
 #endif
 
-#if 1
+  /* Set our ISR (PINA_IRQn) to the highest value (0).  Set all others to 1. */
   {
     NVIC_SetPriority(SVCall_IRQn, 1);
     NVIC_SetPriority(PendSV_IRQn, 1);
@@ -226,7 +232,6 @@ int main(void)
     }
     NVIC_SetPriority(PINA_IRQn, 0);
   }
-#endif
 
   usbMacInit(usbMacDefault(), &usb_device_descriptor, &usb_config_descriptor);
   usbPhyInit(usbPhyDefaultPhy(), usbMacDefault());
@@ -243,7 +248,10 @@ int main(void)
   evtTableHook(palawan_events, shell_terminated, shell_termination_handler);
   palawanShellRestart();
 
-  /*
+#if (CH_USE_RT == TRUE)
+  while (TRUE)
+    chEvtDispatch(evtHandlers(palawan_events), chEvtWaitOne(ALL_EVENTS));
+#else
   int i;
   for (i = 0; i < 100000; i++)
     asm("nop");
@@ -252,10 +260,7 @@ int main(void)
     extern void usbPhyWorker(struct USBPHY *phy);
     usbPhyWorker(usbPhyDefaultPhy());
   }
-  */
-
-  while (TRUE)
-    chEvtDispatch(evtHandlers(palawan_events), chEvtWaitOne(ALL_EVENTS));
+#endif
 }
 
 #if 0

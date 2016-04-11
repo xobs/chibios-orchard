@@ -193,6 +193,11 @@ static int usb_mac_send_data(struct USBMAC *mac, const void *data, int count) {
   return 0;
 }
 
+int usbSendData(struct USBMAC *mac, const void *data, int count) {
+
+  return usb_mac_send_data(mac, data, count);
+}
+
 static int usb_mac_process_setup_read(struct USBMAC *mac,
                                       const struct usb_mac_setup_packet *setup)
 {

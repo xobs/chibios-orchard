@@ -209,8 +209,10 @@ int usbPhyWritePrepare(struct USBPHY *phy,
                        const uint32_t buffer[3],
                        int size) {
 
+  int ret;
+  ret = usb_phy_write_prepare_internal(&phy->queued_data, buffer, size);
   phy->data_is_queued = 1;
-  return usb_phy_write_prepare_internal(&phy->queued_data, buffer, size);
+  return ret;
 }
 
 void usbPhyWriteTest(struct USBPHY *phy) {

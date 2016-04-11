@@ -86,11 +86,6 @@ struct USBMAC {
   const void *data_out;
   int32_t data_out_left;
 
-  /* Data that's ready to be sent */
-  struct USBPHYInternalData phy_internal;
-
-  char data_in_size;
-
   uint8_t data_buffer;  /* Whether we're sending DATA0 or DATA1 */
   uint8_t packet_type;  /* PACKET_SETUP, PACKET_IN, or PACKET_OUT */
 
@@ -101,31 +96,10 @@ struct USBMAC {
   uint8_t tok_epnum;    /* Last token's endpoint */
 };
 
-/* Insert a new packet, received on the wire, into the USB MAC layer.
-   Return value:
-      <-4   A unknown error occurred
-       -4   Unrecognized PID
-       -3   Packet was too large
-       -2   Packet was empty
-       -1   Packet buffer overflowed and packet was dropped
-        0   No error occurred, but there is a time-sensitive packet following
-      > 0   No error occurred, and processing can continue
-   If this function returns 0, then another packet will follow shortly, and
-   the SoC must be able to quickly respond.  In these cases, it is inadvisable
-   to switch threads.
- */
-int usbMacInsertRevI(struct USBMAC *, uint32_t *incoming_packet, int size);
-
-/* Get the next available USB packet, or NULL if none available */
-const struct usb_packet *usbMacGetPacket(struct USBMAC *mac);
-
 /* Process all packets sitting in the queue */
 int usbMacProcess(struct USBMAC *mac,
                   const uint8_t packet[11],
                   uint32_t count);
-
-/* Send the specified USB packet */
-int usbMacSendPacket(struct USBMAC *mac, const struct usb_packet *packet);
 
 /* Initialize the given USB MAC */
 void usbMacInit(struct USBMAC *mac,

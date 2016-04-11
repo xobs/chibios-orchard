@@ -144,13 +144,14 @@ const char *usbPidToStr(uint8_t pid);
 /* Get the PHY associated with this MAC */
 struct USBPHY *usbMacPhy(struct USBMAC *mac);
 
+/* Indicate that the transfer concluded successfully */
+void usbMacTransferSuccess(struct USBMAC *mac);
+
+int usbSendData(struct USBMAC *mac, const void *data, int count);
+
 static inline int isValidPID(uint8_t pid) {
   return ((pid ^ (pid >> 4)) & 0xf) == 0xf;
 }
-
-void usbSendAckI(struct USBMAC *mac);
-void usbSendNakI(struct USBMAC *mac);
-void usbSendDataI(struct USBMAC *mac);
 
 extern struct USBPHYInternalData phyAck;
 extern struct USBPHYInternalData phyNak;

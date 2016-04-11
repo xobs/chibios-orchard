@@ -86,20 +86,13 @@ static void usb_mac_process_data(struct USBMAC *mac) {
   }
 
   /* Keep the packet size to 8 bytes max */
-  packet->size = mac->data_out_left;
   if (mac->data_out_left > 8)
     packet->size = 8;
+  else
+    packet->size = mac->data_out_left;
 
   /* Copy over data bytes */
   memcpy(packet->data, mac->data_out, packet->size);
-
-  /* Reduce the amount of data left.
-   * If the packet is divisible by 8, this will cause one more call
-   * to this function with mac->data_out_left == 0.  This will send
-   * a NULL packet, which indicates end-of-transfer.
-   */
-  mac->data_out_left -= 8;
-  mac->data_out += 8;
 
   /* Calculate and copy the crc16 */
   crc = ~crc16(packet->data, packet->size, 0xffff, 0xa001);
@@ -108,6 +101,17 @@ static void usb_mac_process_data(struct USBMAC *mac) {
 
   /* Prepare the packet, including the PID at the end */
   usbPhyWritePrepare(mac->phy, raw_data_32, packet->size + 1);
+}
+
+void usbMacTransferSuccess(struct USBMAC *mac) {
+
+  /* Reduce the amount of data left.
+   * If the packet is divisible by 8, this will cause one more call
+   * to this function with mac->data_out_left == 0.  This will send
+   * a NULL packet, which indicates end-of-transfer.
+   */
+  mac->data_out_left -= 8;
+  mac->data_out += 8;
 }
 
 const char *usbPidToStr(uint8_t pid) {

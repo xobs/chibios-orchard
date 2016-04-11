@@ -193,9 +193,22 @@ static int usb_mac_send_data(struct USBMAC *mac, const void *data, int count) {
   return 0;
 }
 
-int usbSendData(struct USBMAC *mac, const void *data, int count) {
+int usbSendData(struct USBMAC *mac, int epnum, const void *data, int count) {
 
-  return usb_mac_send_data(mac, data, count);
+  (void)epnum;
+  int ret;
+
+  ret = usb_mac_send_data(mac, data, count);
+  if (ret)
+    return ret;
+
+  usb_mac_process_data(mac);
+
+#if (CH_USE_RT == TRUE)
+  (void) osalThreadSuspendS(&mac->thread);
+#endif
+
+  return 0;
 }
 
 static int usb_mac_process_setup_read(struct USBMAC *mac,
@@ -430,6 +443,16 @@ int usbMacProcess(struct USBMAC *mac,
     mac->data_buffer = 0;
     usb_mac_parse_data(mac, packet + 1, count - 1);
     mac->packet_type = packet_type_none;
+    break;
+
+  case USB_PID_ACK:
+#if (CH_USE_RT == TRUE)
+    if (mac->thread && mac->data_out_left <= 0) {
+      mac->data_out_left = -1;
+      mac->data_out = NULL;
+      osalThreadResumeS(&mac->thread, MSG_OK);
+    }
+#endif
     break;
 
   default:

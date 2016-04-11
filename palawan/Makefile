@@ -3,7 +3,7 @@
 # NOTE: Can be overridden externally.
 #
 
-#CH_USE_RT=TRUE
+CH_USE_RT=TRUE
 ifeq ($(CH_USE_RT),)
   CH_USE_RT=FALSE
 endif

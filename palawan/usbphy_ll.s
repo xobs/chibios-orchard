@@ -496,12 +496,12 @@ wdnclrreg .req sp
   ldr wnmask, [wusbphy, #dnMask]    // USB D- mask
 
   /* Pre-set the lines to J-state to prevent glitching */
-#if 1
+#if 0
   mov wpaddr, wdpsetreg             // D+ set
-  ldr wnaddr, [wusbphy, #dnCAddr]        // D- clr
+  ldr wnaddr, [wusbphy, #dnCAddr]   // D- clr
 #else
   mov wpaddr, wdpclrreg             // D+ clr
-  ldr wnaddr, [wusbphy, #dnSAddr]        // D- set
+  ldr wnaddr, [wusbphy, #dnSAddr]   // D- set
 #endif
   str wpmask, [wpaddr]              // Write D+ value
   str wnmask, [wnaddr]              // Write D- value

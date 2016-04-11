@@ -114,6 +114,7 @@ static void usbCaptureI(struct USBPHY *phy) {
   else if (ret == USB_DIP_ACK) {
     /* Allow the next byte to be sent */
     usbMacTransferSuccess(phy->mac);
+    phy->byte_queue_head++;
     phy->data_is_queued = 0;
     goto out;
   }
@@ -290,6 +291,10 @@ void usbPhyWorker(struct USBPHY *phy) {
         bytes[data_copied++] = bit_reverse_table_256[in_ptr[data_left--]];
       usbMacProcess(phy->mac, bytes, data_copied);
     }
+    else if (data_left == 0) {
+      bytes[0] = bit_reverse_table_256[in_ptr[0]];
+      usbMacProcess(phy->mac, bytes, 1);
+    }
 
     // Finally, move on to the next packet
     phy->byte_queue_tail++;
@@ -310,8 +315,6 @@ static THD_FUNCTION(usb_worker_thread, arg) {
     osalSysUnlock();
 
     usbPhyWorker(phy);
-    chThdSleepMilliseconds(1);
-    //chEvtBroadcast(&phy->data_available);
   }
 
   return;
@@ -345,7 +348,7 @@ void usbPhyDrainIfNecessary(void) {
   struct USBPHY *phy = &defaultUsbPhy;
 
   if (phy->byte_queue_tail != phy->byte_queue_head)
-    osalThreadResumeI(&(phy)->thread, MSG_OK);
+    osalThreadResumeI(&phy->thread, MSG_OK);
 }
 #endif
 

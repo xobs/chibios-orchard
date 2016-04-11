@@ -86,6 +86,10 @@ struct USBMAC {
   const void *data_out;
   int32_t data_out_left;
 
+#if (CH_USE_RT == TRUE)
+  thread_reference_t thread;
+#endif
+
   uint8_t data_buffer;  /* Whether we're sending DATA0 or DATA1 */
   uint8_t packet_type;  /* PACKET_SETUP, PACKET_IN, or PACKET_OUT */
 
@@ -121,7 +125,7 @@ struct USBPHY *usbMacPhy(struct USBMAC *mac);
 /* Indicate that the transfer concluded successfully */
 void usbMacTransferSuccess(struct USBMAC *mac);
 
-int usbSendData(struct USBMAC *mac, const void *data, int count);
+int usbSendData(struct USBMAC *mac, int epnum, const void *data, int count);
 
 static inline int isValidPID(uint8_t pid) {
   return ((pid ^ (pid >> 4)) & 0xf) == 0xf;

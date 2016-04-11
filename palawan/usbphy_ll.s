@@ -693,7 +693,7 @@ usb_write_eof:
   bl usb_write_state_se0
 
   /* Set J-state, as required by the spec */
-  bl usb_phy_wait_6_cycles
+  bl usb_phy_wait_5_cycles
   mov wpaddr, wdpsetreg             // D+ set
   mov wnaddr, wdnclrreg             // D- clr
   str wpmask, [wpaddr]

@@ -113,6 +113,7 @@ static void usbCaptureI(struct USBPHY *phy) {
   }
   else if (ret == USB_DIP_ACK) {
     /* Allow the next byte to be sent */
+    usbMacTransferSuccess(phy->mac);
     phy->data_is_queued = 0;
     goto out;
   }

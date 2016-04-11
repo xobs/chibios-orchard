@@ -127,11 +127,10 @@ static const struct usb_device_descriptor usb_device_descriptor = {
   .idProduct = 0x05ce,
   .bcdDevice = 0xa014,        /* Device release 1.0 */
   .iManufacturer = 0x00,      /* No manufacturer string */
-  .iProduct = 0x02,           /* Product name in string #2 */
+  .iProduct = 0x00,           /* Product name in string #2 */
   .iSerialNumber = 0x00,      /* No serial number */
   .bNumConfigurations = 0x01,
 };
-
 
 static const struct usb_configuration_descriptor usb_config_descriptor = {
   .bLength = sizeof(struct usb_configuration_descriptor),
@@ -143,8 +142,8 @@ static const struct usb_configuration_descriptor usb_config_descriptor = {
   .bNumInterfaces = 1,
   .bConfigurationValue = 1,
   .iConfiguration = 0,
-  .bmAttributes = 0xa0,
-  .bMaxPower = 0x17,
+  .bmAttributes = 0xa0,       /* Remote wakeup supported */
+  .bMaxPower = 100/2,         /* 100 mA (in 2-mA units) */
   .data = {
     /* struct usb_interface_descriptor { */
     /*  uint8_t bLength;            */ sizeof(struct usb_interface_descriptor),
@@ -165,7 +164,7 @@ static const struct usb_configuration_descriptor usb_config_descriptor = {
     /*  uint8_t  bCountryCode;            */ 0,
     /*  uint8_t  bNumDescriptors;         */ 1, /* We have only one REPORT */
     /*  uint8_t  bReportDescriptorType;   */ DT_HID_REPORT,
-    /*  uint16_t wReportDescriptorLength; */ 32, 0x00,
+    /*  uint16_t wReportDescriptorLength; */ 63, 0x00,
     /* }                                  */
 
     /* struct usb_endpoint_descriptor { */

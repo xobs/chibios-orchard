@@ -219,21 +219,35 @@ int main(void)
     osalSysUnlock();
 #endif
 
-  /* Set our ISR (PINA_IRQn) to the highest value (0).  Set all others to 1. */
   {
+  }
+
+  if (palawanModel() == palawan_rx) {
+    int i;
+    /* Set our ISR (PINA_IRQn) to the highest value (0), above all others */
     NVIC_SetPriority(SVCall_IRQn, 1);
     NVIC_SetPriority(PendSV_IRQn, 1);
     NVIC_SetPriority(SysTick_IRQn, 1);
-    int i;
     for (i = 0; i < CORTEX_NUM_VECTORS; i++) {
       if (NVIC_GetPriority(i) == 0)
         NVIC_SetPriority(i, 3);
     }
     NVIC_SetPriority(PINA_IRQn, 0);
+
+    /* Initialize USB */
+    usbMacInit(usbMacDefault(), &usb_device_descriptor, &usb_config_descriptor);
+    usbPhyInit(usbPhyDefaultPhy(), usbMacDefault());
   }
 
-  usbMacInit(usbMacDefault(), &usb_device_descriptor, &usb_config_descriptor);
-  usbPhyInit(usbPhyDefaultPhy(), usbMacDefault());
+  else if (palawanModel() == palawan_tx) {
+ 
+    extern int palawanGpioInit(void);
+    *((volatile uint32_t *)0xf80000cc) = 0x80; /* Toggle green LED */
+    palawanGpioInit();
+
+    extern int palawanGpioStart(void);
+    palawanGpioStart();
+  }
 
   palawanEventsStart();
   palawanShellInit();

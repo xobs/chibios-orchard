@@ -106,9 +106,11 @@ LDSCRIPT= $(STARTUPLD)/KL16Z128.ld
 # setting.
 CSRC = main.c \
        gitversion.c \
+       palawan-gpio.c \
        palawan-shell.c \
        palawan-events.c \
        palawan-vectors.c \
+       radio.c \
        usbphy.c \
        usbmac.c \
        hex.c \

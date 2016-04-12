@@ -486,8 +486,9 @@
  */
 #define CH_CFG_SYSTEM_TICK_HOOK() {                                         \
   extern void usbPhyDrainIfNecessary(void);                                 \
-  usbPhyDrainIfNecessary();                                                 \
-  /* System tick event code here.*/                                         \
+  extern int palawanModel(void);                                            \
+  if (palawanModel() == 1/*palawan_rx*/)                                    \
+    usbPhyDrainIfNecessary();                                               \
 }
 
 /**

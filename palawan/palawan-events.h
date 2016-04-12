@@ -32,6 +32,9 @@ struct evt_table {
   event_listener_t *listeners;
 };
 
+extern event_source_t rf_pkt_rdy;
+extern struct evt_table palawan_events;
+
 #define evtTableInit(table, capacity)                                       \
   do {                                                                      \
     static evhandler_t handlers[capacity];                                  \

@@ -29,9 +29,21 @@
 
 #define PAIR_CFG_ADC_NUM        (23)
 
-#define PALAWAN_CFG_RESISTANCE_THRESH 128
+#define PALAWAN_CFG_RESISTANCE_THRESH 64
 #define PALAWAN_RX_VALUE 65536
 #define PALAWAN_RX_PAIR_VALUE 0
+
+#define PALAWAN_TX_VALUE_1 9906
+#define PALAWAN_TX_VALUE_1_PAIR 1028
+#define PALAWAN_TX_VALUE_2 20547
+#define PALAWAN_TX_VALUE_2_PAIR 2582
+#define PALAWAN_TX_VALUE_3 32787
+#define PALAWAN_TX_VALUE_3_PAIR 5442
+#define PALAWAN_TX_VALUE_4 65483
+#define PALAWAN_TX_VALUE_4_PAIR 65127
+
+const char *runtime_board_name = "Kosagi Palawan (Unknown)";
+static int _model = palawan_unknown;
 
 /*
 
@@ -174,9 +186,6 @@ const PALConfig pal_default_config =
 };
 #endif
 
-static int _model = palawan_unknown;
-
-
 /* The Palawan model type is encoded in resistors hanging off of PTE30:
 
    - 22k: Palawan Rx
@@ -185,6 +194,7 @@ static int _model = palawan_unknown;
 */
 enum palawan_model palawanModel(void) {
  
+  /* Sample the strapping resistors, to determine model type */
   if ((_model != palawan_tx) && (_model != palawan_rx)) {
     uint16_t gain;
     int resistance;
@@ -257,6 +267,43 @@ enum palawan_model palawanModel(void) {
     else if ((resistance_min < PALAWAN_RX_PAIR_VALUE)
           && (resistance_max > PALAWAN_RX_PAIR_VALUE))
       _model = palawan_rx;
+
+    else if ((resistance_min < PALAWAN_TX_VALUE_1)
+          && (resistance_max > PALAWAN_TX_VALUE_1))
+      _model = palawan_tx;
+
+    else if ((resistance_min < PALAWAN_TX_VALUE_2)
+          && (resistance_max > PALAWAN_TX_VALUE_2))
+      _model = palawan_tx;
+
+    else if ((resistance_min < PALAWAN_TX_VALUE_3)
+          && (resistance_max > PALAWAN_TX_VALUE_3))
+      _model = palawan_tx;
+
+    else if ((resistance_min < PALAWAN_TX_VALUE_4)
+          && (resistance_max > PALAWAN_TX_VALUE_4))
+      _model = palawan_tx;
+
+    else if ((resistance_min < PALAWAN_TX_VALUE_1_PAIR)
+          && (resistance_max > PALAWAN_TX_VALUE_1_PAIR))
+      _model = palawan_tx;
+
+    else if ((resistance_min < PALAWAN_TX_VALUE_2_PAIR)
+          && (resistance_max > PALAWAN_TX_VALUE_2_PAIR))
+      _model = palawan_tx;
+
+    else if ((resistance_min < PALAWAN_TX_VALUE_3_PAIR)
+          && (resistance_max > PALAWAN_TX_VALUE_3_PAIR))
+      _model = palawan_tx;
+
+    else if ((resistance_min < PALAWAN_TX_VALUE_4_PAIR)
+          && (resistance_max > PALAWAN_TX_VALUE_4_PAIR))
+      _model = palawan_tx;
+
+    if (_model == palawan_rx)
+      runtime_board_name = "Kosagi Palawan (Rx)";
+    else if (_model == palawan_tx)
+      runtime_board_name = "Kosagi Palawan (Tx)";
   }
 
   return _model;
@@ -518,4 +565,7 @@ void __early_init(void) {
  * @todo    Add your board-specific code, if any.
  */
 void boardInit(void) {
+
+  /* Re-sample the ADC, now that the board is running */
+  (void)palawanModel();
 }

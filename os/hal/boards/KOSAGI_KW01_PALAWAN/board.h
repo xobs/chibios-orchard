@@ -25,7 +25,8 @@
  * Board identifier.
  */
 #define BOARD_KOSAGI_PALAWAN
-#define BOARD_NAME                  "Kosagi Palawan"
+#define BOARD_NAME                  runtime_board_name
+extern const char *runtime_board_name;
 
 /* External 8 MHz crystal with PLL for 48 MHz core/system clock. */
 #define KINETIS_SYSCLK_FREQUENCY    48000000UL

@@ -163,13 +163,13 @@ int mouse_fill_report(char report[8], char buf[BUF_LEN], int *hold)
 			errno = 0;
 			report[1 + mvt++] = (char)strtol(tok, NULL, 0);
 			if (errno != 0) {
-				fprintf(stderr, "Bad value:'%s'\n", tok);
+				fprintf(stderr, "Bad value:'%s'\r\n", tok);
 				report[1 + mvt--] = 0;
 			}
 			continue;
 		}
 
-		fprintf(stderr, "unknown option: %s\n", tok);
+		fprintf(stderr, "unknown option: %s\r\n", tok);
 	}
 	return 3;
 }
@@ -215,13 +215,13 @@ int joystick_fill_report(char report[8], char buf[BUF_LEN], int *hold)
 			errno = 0;
 			report[mvt++] = (char)strtol(tok, NULL, 0);
 			if (errno != 0) {
-				fprintf(stderr, "Bad value:'%s'\n", tok);
+				fprintf(stderr, "Bad value:'%s'\r\n", tok);
 				report[mvt--] = 0;
 			}
 			continue;
 		}
 
-		fprintf(stderr, "unknown option: %s\n", tok);
+		fprintf(stderr, "unknown option: %s\r\n", tok);
 	}
 	return 4;
 }
@@ -230,15 +230,15 @@ int joystick_fill_report(char report[8], char buf[BUF_LEN], int *hold)
 static void print_options(BaseSequentialStream *chp) {
 	int i = 0;
 
-  chprintf(chp, "keyboard options:\n"
-                "\t--hold\n");
+  chprintf(chp, "keyboard options:\r\n"
+                "\t--hold\r\n");
   for (i = 0; kmod[i].opt != NULL; i++)
-    chprintf(chp, "\t%s\n", kmod[i].opt);
-  chprintf(chp, "\nkeyboard values:\n"
-                "\t[a-z] or\n");
+    chprintf(chp, "\t%s\r\n", kmod[i].opt);
+  chprintf(chp, "\r\nkeyboard values:\r\n"
+                "\t[a-z] or\r\n");
   for (i = 0; kval[i].opt != NULL; i++)
-    chprintf(chp, "\t%-8s%s", kval[i].opt, i % 2 ? "\n" : "");
-  chprintf(chp, "\n");
+    chprintf(chp, "\t%-8s%s", kval[i].opt, i % 2 ? "\r\n" : "");
+  chprintf(chp, "\r\n");
 }
 
 
@@ -251,6 +251,7 @@ static void cmd_usbkbd(BaseSequentialStream *chp, int argc, char *argv[])
 
   if (!argc) {
     print_options(chp);
+    usbSendData(usbMacDefault(), 1, report_32, 8);
     return;
   }
 

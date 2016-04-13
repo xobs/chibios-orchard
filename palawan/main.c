@@ -23,6 +23,11 @@
 #include "usbmac.h"
 #include "usblink.h"
 
+#include "radio-protocol.h"
+#include "radio.h"
+
+#include "hex.h"
+
 #include "palawan.h"
 #include "palawan-events.h"
 #include "palawan-shell.h"
@@ -55,15 +60,14 @@ static void shell_termination_handler(eventid_t id) {
 }
 #endif
 
-/*
-static void default_radio_handler(uint8_t type, uint8_t src, uint8_t dst,
+static int default_radio_handler(uint8_t port, uint8_t src, uint8_t dst,
                                   uint8_t length, const void *data) {
 
   chprintf(stream, "\r\nNo handler for packet found.  %02x -> %02x : %02x\r\n",
-           src, dst, type);
-  print_hex(stream, data, length, 0);
+           src, dst, port);
+  print_hex(stream, data, length);
+  return 0;
 }
-*/
 
 static void print_mcu_info(void) {
   uint32_t sdid = SIM->SDID;
@@ -219,9 +223,6 @@ int main(void)
     osalSysUnlock();
 #endif
 
-  {
-  }
-
   if (palawanModel() == palawan_rx) {
     int i;
     /* Set our ISR (PINA_IRQn) to the highest value (0), above all others */
@@ -251,12 +252,17 @@ int main(void)
 
   palawanEventsStart();
   palawanShellInit();
+  radioInit(radioDriver, &SPID1);
 
   chprintf(stream, "\r\n\r\nPalawan shell.  Based on build %s\r\n", gitversion);
   print_mcu_info();
 
   spiStart(&SPID1, &spi_config);
   spiStart(&SPID2, &spi_config);
+
+  radioSetDefaultHandler(default_radio_handler);
+
+  radioStart(radioDriver);
 
   evtTableHook(palawan_events, shell_terminated, shell_termination_handler);
   palawanShellRestart();

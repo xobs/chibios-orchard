@@ -487,7 +487,7 @@
 #define CH_CFG_SYSTEM_TICK_HOOK() {                                         \
   extern void usbPhyDrainIfNecessary(void);                                 \
   extern int palawanModel(void);                                            \
-  if (palawanModel() == 1/*palawan_rx*/)                                    \
+  if (palawanModel() == 2/*palawan_rx*/)                                    \
     usbPhyDrainIfNecessary();                                               \
 }
 

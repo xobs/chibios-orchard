@@ -111,6 +111,7 @@ CSRC = main.c \
        palawan-events.c \
        palawan-vectors.c \
        radio.c \
+       radio-protocol.c \
        usbphy.c \
        usbmac.c \
        hex.c \
@@ -128,6 +129,7 @@ CSRC = main.c \
 ifeq ($(CH_USE_RT),TRUE)
 CSRC += $(CHIBIOS)/os/various/shell.c \
         $(wildcard cmd-*.c)
+        $(wildcard prot-*.c)
 endif
 
 # C++ sources that can be compiled in ARM or THUMB mode depending on the global

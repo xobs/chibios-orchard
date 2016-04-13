@@ -11,7 +11,7 @@ typedef struct _RadioPacket {
   uint8_t length;       /* Total length of packet, including length field */
   uint8_t dst;          /* Address of intended recipient */
   uint8_t src;          /* Address of device sending packet */
-  uint8_t prot;         /* Subsystem packet is intended for */
+  uint8_t port;         /* Subsystem packet is intended for */
   uint8_t payload[0];   /* Actual contents of packet */
 } RadioPacket;
 
@@ -23,31 +23,41 @@ enum radio_protocols {
 
 extern KRadioDevice KRADIO1;
 
-void radioStart(KRadioDevice *radio, SPIDriver *spip);
+/* Call exactly once at startup to initialize the radio object. */
+void radioInit(KRadioDevice *radio, SPIDriver *spip);
+
+/* Call after startup to start the radio. */
+void radioStart(KRadioDevice *radio);
+
+/* Call to stop the radio. */
 void radioStop(KRadioDevice *radio);
-uint8_t radioRead(KRadioDevice *radio, uint8_t addr);
-void radioWrite(KRadioDevice *radio, uint8_t addr, uint8_t val);
-int radioDump(KRadioDevice *radio, uint8_t addr, void *bfr, int count);
+
+/* Raw read of a radio register */
+uint8_t radioReadReg(KRadioDevice *radio, uint8_t addr);
+
+/* Raw write to a radio register */
+void radioWriteReg(KRadioDevice *radio, uint8_t addr, uint8_t val);
+
+/* Raw read from multiple radio registers */
+int radioReadRegs(KRadioDevice *radio, uint8_t addr, void *bfr, int count);
+
+/* Get the temperature (in C) of the radio */
 int radioTemperature(KRadioDevice *radio);
+
+/* Set our network ID.  Can be 0-8 bytes. */
 void radioSetNetwork(KRadioDevice *radio, const uint8_t *id, uint8_t len);
+
+/* Send a packet out the network */
 void radioSend(KRadioDevice *radio, uint8_t dest, uint8_t prot,
                                     size_t len, const void *payload);
+
+/* Set our 8-bit address */
 void radioSetAddress(KRadioDevice *radio, uint8_t addr);
+
+/* Return our 8-bit address */
 uint8_t radioAddress(KRadioDevice *radio);
 
-void radioSetDefaultHandler(KRadioDevice *radio,
-                            void (*handler)(uint8_t prot,
-                                            uint8_t src,
-                                            uint8_t dst,
-                                            uint8_t length,
-                                            const void *data));
-void radioSetHandler(KRadioDevice *radio, uint8_t prot,
-                     void (*handler)(uint8_t prot,
-                                     uint8_t src,
-                                     uint8_t dst,
-                                     uint8_t length,
-                                     const void *data));
-
+/* System callback for the radio packet_ready signal */
 void radioInterrupt(EXTDriver *extp, expchannel_t channel);
 
 #endif /* __ORCHARD_RADIO_H__ */

@@ -7,7 +7,9 @@
 
 #include "palawan.h"
 #include "palawan-events.h"
+
 #include "radio.h"
+#include "radio-protocol.h"
 
 #include "TransceiverReg.h"
 
@@ -25,6 +27,8 @@
 
 /* This number was guessed based on observations (133 at 30 degrees) */
 static int temperature_offset = 133 + 30;
+
+event_source_t rf_pkt_rdy;
 
 enum modulation_type {
   modulation_fsk_no_shaping = 0,
@@ -50,12 +54,6 @@ enum encoding_type {
   encoding_whitening = 2,
 };
 
-typedef struct _PacketHandler {
-    void (*handler)(uint8_t prot, uint8_t src, uint8_t dst,
-                    uint8_t length, const void *data);
-      uint8_t prot;
-} PacketHandler;
-
 /* Kinetis Radio definition */
 struct _KRadioDevice {
   uint16_t                bit_rate;
@@ -67,12 +65,6 @@ struct _KRadioDevice {
   uint8_t                 address;
   uint8_t                 broadcast;
   uint8_t                 num_handlers;
-  PacketHandler           handlers[MAX_PACKET_HANDLERS];
-  void                    (*default_handler)(uint8_t prot,
-                                             uint8_t src,
-                                             uint8_t dst,
-                                             uint8_t length,
-                                             const void *data);
   enum modulation_type    modulation;
   enum radio_mode         mode;
   enum encoding_type      encoding;
@@ -363,40 +355,24 @@ static void radio_unload_packet(eventid_t id) {
   radio_unselect(radio);
 
   /* Dispatch the packet handler */
-  unsigned int i;
-  bool handled = false;
-  for (i = 0; i < radio->num_handlers; i++) {
-    if (radio->handlers[i].prot == pkt.prot) {
-      radio->handlers[i].handler(pkt.prot,
-                                 pkt.src,
-                                 pkt.dst,
-                                 sizeof(payload),
-                                 payload);
-      handled = true;
-      break;
-    }
-  }
-
-  /* If the packet wasn't handled, pass it to the default handler */
-  if (!handled && radio->default_handler)
-      radio->default_handler(pkt.prot,
-                             pkt.src,
-                             pkt.dst,
-                             sizeof(payload),
-                             payload);
+  radioPacketDispatch(pkt.port, pkt.src, pkt.dst, sizeof(payload), payload);
 }
 
 void radioStop(KRadioDevice *radio) {
   radio_set(radio, RADIO_OpMode, 0x80); // force into sleep mode immediately
 }
 
-void radioStart(KRadioDevice *radio, SPIDriver *spip) {
-
-  unsigned int reg;
+void radioInit(KRadioDevice *radio, SPIDriver *spip) {
 
   radio->driver = spip;
 
+  chEvtObjectInit(&rf_pkt_rdy);
   evtTableHook(palawan_events, rf_pkt_rdy, radio_unload_packet);
+}
+
+void radioStart(KRadioDevice *radio) {
+
+  unsigned int reg;
 
   reg = 0;
   while (reg < ARRAY_SIZE(default_registers)) {
@@ -434,40 +410,7 @@ void radioStart(KRadioDevice *radio, SPIDriver *spip) {
                                | OpMode_Receiver);
 }
 
-void radioSetDefaultHandler(KRadioDevice *radio,
-                            void (*handler)(uint8_t prot,
-                                            uint8_t src,
-                                            uint8_t dst,
-                                            uint8_t length,
-                                            const void *data)) {
-  radio->default_handler = handler;
-}
-
-void radioSetHandler(KRadioDevice *radio, uint8_t prot,
-                     void (*handler)(uint8_t prot,
-                                     uint8_t src,
-                                     uint8_t dst,
-                                     uint8_t length,
-                                     const void *data)) {
-  unsigned int i;
-
-  /* Replace an existing handler? */
-  for (i = 0; i < radio->num_handlers; i++) {
-    if (radio->handlers[i].prot == prot) {
-      radio->handlers[i].handler = handler;
-      return;
-    }
-  }
-
-  /* New handler */
-  osalDbgAssert(radio->num_handlers < MAX_PACKET_HANDLERS,
-                "Too many packet handler prots");
-  radio->handlers[radio->num_handlers].prot    = prot;
-  radio->handlers[radio->num_handlers].handler = handler;
-  radio->num_handlers++;
-}
-
-uint8_t radioRead(KRadioDevice *radio, uint8_t addr) {
+uint8_t radioReadReg(KRadioDevice *radio, uint8_t addr) {
 
   uint8_t val;
 
@@ -476,12 +419,12 @@ uint8_t radioRead(KRadioDevice *radio, uint8_t addr) {
   return val;
 }
 
-void radioWrite(KRadioDevice *radio, uint8_t addr, uint8_t val) {
+void radioWriteReg(KRadioDevice *radio, uint8_t addr, uint8_t val) {
 
   radio_set(radio, addr, val);
 }
 
-int radioDump(KRadioDevice *radio, uint8_t addr, void *bfr, int count) {
+int radioReadRegs(KRadioDevice *radio, uint8_t addr, void *bfr, int count) {
 
   radio_select(radio);
   spiSend(radio->driver, 1, &addr);
@@ -541,9 +484,9 @@ void radioSetNetwork(KRadioDevice *radio, const uint8_t *id, uint8_t len) {
 
 static void radio_handle_interrupt(KRadioDevice *radio) {
 
-  if (radio->mode == mode_transmitting) {
+  if (radio->mode == mode_transmitting || radio->thread) {
     osalSysLockFromISR();
-    osalThreadResumeI(&(radio)->thread, MSG_OK);
+    osalThreadResumeI(&radio->thread, MSG_OK);
     osalSysUnlockFromISR();
   }
   else if (radio->mode == mode_receiving) {
@@ -574,7 +517,7 @@ uint8_t radioAddress(KRadioDevice *radio) {
 
 void radioSend(KRadioDevice *radio,
                uint8_t addr,
-               uint8_t prot,
+               uint8_t port,
                size_t bytes,
                const void *payload) {
 
@@ -584,7 +527,7 @@ void radioSend(KRadioDevice *radio,
   pkt.length = bytes + sizeof(pkt);
   pkt.src = radio->address;
   pkt.dst = addr;
-  pkt.prot = prot;
+  pkt.port = port;
 
   /* Ideally, we'd poll for DIO1 to see when the FIFO can accept data.
    * This is not wired up on Orchard, so we can't transmit packets larger
@@ -615,9 +558,16 @@ void radioSend(KRadioDevice *radio,
   radio_unselect(radio);
 
   /* Wait for the transmission to complete (will be unlocked in IRQ) */
-  osalSysLock();
-  (void) osalThreadSuspendS(&radio->thread);
-  osalSysUnlock();
+  /* XXX Replace with Mutex */
+  while (1) {
+    osalSysLock();
+    if (!radio->thread) {
+      (void) osalThreadSuspendS(&radio->thread);
+      osalSysUnlock();
+      break;
+    }
+    osalSysUnlock();
+  }
 
   /* Move back into "Rx" mode */
   radio->mode = mode_receiving;

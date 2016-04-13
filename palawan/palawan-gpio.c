@@ -149,6 +149,10 @@ int palawanGpioInit(void) {
   return 0;
 }
 
+#include "radio.h"
+#include "radio-protocol.h"
+int radioPing(KRadioDevice *radio, uint8_t addr, uint32_t timeout_ms,
+                  uint32_t len, void *payload);
 
 THD_WORKING_AREA(waThread, 128);
 #include "chprintf.h"
@@ -170,12 +174,26 @@ static THD_FUNCTION(palawan_gpio_thread, arg) {
       struct palawan_input *input = &inputs[i];
       uint8_t val;
 
-      palSetPadMode(input->port, input->gpionum, PAL_MODE_INPUT_PULLUP);
-      palSetPadMode(input->port, input->gpionum, PAL_MODE_INPUT);
+//      palSetPadMode(input->port, input->gpionum, PAL_MODE_INPUT_PULLUP);
+//      palSetPadMode(input->port, input->gpionum, PAL_MODE_INPUT);
       val = !!palReadPad(input->port, input->gpionum);
       if (val != samples[i]) {
         chprintf(stream, "Port %d changed %d -> %d\r\n", i, samples[i], val);
         samples[i] = val;
+
+        /* Keydown */
+        if (!val) {
+          uint8_t payload[] = {'Q'};
+          int ms;
+          ms = radioPing(radioDriver, 0xff, 50, sizeof(payload), payload);
+
+          if (ms > 0) {
+            chprintf(stream, "Ping: %d ms\r\n", ms);
+            *((volatile uint32_t *)0xf80000cc) = 0x80; /* Toggle green LED */
+          }
+          else
+            chprintf(stream, "Ping: timeout\r\n");
+        }
 
         //palSetPadMode(input->port, input->gpionum, PAL_MODE_OUTPUT_PUSHPULL);
         //palSetPad(input->port, input->gpionum);

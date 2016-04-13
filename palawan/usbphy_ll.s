@@ -1,5 +1,5 @@
-.section .ramtext    /* Can also run out of .section .ramtext */
-//.section .text    /* Can also run out of .section .ramtext */
+//.section .ramtext /* Can also run out of .section .ramtext */
+.section .text    /* Can also run out of .section .ramtext */
 
 #if 0
   /***************************************************************************

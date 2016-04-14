@@ -131,7 +131,4 @@ static inline int isValidPID(uint8_t pid) {
   return ((pid ^ (pid >> 4)) & 0xf) == 0xf;
 }
 
-extern struct USBPHYInternalData phyAck;
-extern struct USBPHYInternalData phyNak;
-
 #endif /* __USB_MAC_H__ */

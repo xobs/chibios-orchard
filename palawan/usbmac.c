@@ -7,10 +7,6 @@
 
 static struct USBMAC default_mac;
 
-/* Pre-processed internal data structures for fast responses */
-struct USBPHYInternalData phyAck;
-struct USBPHYInternalData phyNak;
-
 static const uint8_t report_descriptor[] = {
   0x05, 0x01, /* USAGE_PAGE (Generic Desktop)           */
   0x09, 0x06, /* USAGE (Keyboard)                       */

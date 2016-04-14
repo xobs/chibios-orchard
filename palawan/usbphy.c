@@ -8,6 +8,10 @@
 #define USB_FS_RATE 12000000 /* 12 MHz */
 #define USB_LS_RATE (USB_FS_RATE / 8) /* 1.5 MHz */
 
+/* Pre-processed internal data structures for fast responses */
+static struct USBPHYInternalData phyAck;
+static struct USBPHYInternalData phyNak;
+
 /* We need to reverse bits.  Use a 256-byte lookup table to speed things up. */
 const uint8_t bit_reverse_table_256[] = {
 #define R2(n)     n,     n + 2*64,     n + 1*64,     n + 3*64

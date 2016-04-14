@@ -119,80 +119,7 @@ static void print_mcu_info(void) {
 int loop_counter = 0;
 int last_ret;
 
-static const struct usb_device_descriptor usb_device_descriptor = {
-  .bLength = sizeof(struct usb_device_descriptor),
-  .bDescriptorType = DT_DEVICE,       /* DEVICE */
-  .bcdUSB = 0x0200,           /* USB 2.0 */
-  .bDeviceClass = 0x00,
-  .bDeviceSubClass = 0x00,
-  .bDeviceProtocol = 0x00,
-  .bMaxPacketSize0 = 0x08,    /* 8-byte packets max */
-  .idVendor = 0x1bcf,
-  .idProduct = 0x05ce,
-  .bcdDevice = 0xa014,        /* Device release 1.0 */
-  .iManufacturer = 0x00,      /* No manufacturer string */
-  .iProduct = 0x00,           /* Product name in string #2 */
-  .iSerialNumber = 0x00,      /* No serial number */
-  .bNumConfigurations = 0x01,
-};
-
-static const struct usb_configuration_descriptor usb_config_descriptor = {
-  .bLength = sizeof(struct usb_configuration_descriptor),
-  .bDescriptorType = DT_CONFIGURATION,
-  .wTotalLength = sizeof(struct usb_configuration_descriptor)
-                + sizeof(struct usb_interface_descriptor)
-                + sizeof(struct usb_hid_descriptor)
-                + sizeof(struct usb_endpoint_descriptor),
-  .bNumInterfaces = 1,
-  .bConfigurationValue = 1,
-  .iConfiguration = 0,
-  .bmAttributes = 0xa0,       /* Remote wakeup supported */
-  .bMaxPower = 100/2,         /* 100 mA (in 2-mA units) */
-  .data = {
-    /* struct usb_interface_descriptor { */
-    /*  uint8_t bLength;            */ sizeof(struct usb_interface_descriptor),
-    /*  uint8_t bDescriptorType;    */ DT_INTERFACE,
-    /*  uint8_t bInterfaceNumber;   */ 0,
-    /*  uint8_t bAlternateSetting;  */ 0,
-    /*  uint8_t bNumEndpoints;      */ 1, /* One additional EP */
-    /*  uint8_t bInterfaceClass;    */ 3, /* HID class */
-    /*  uint8_t bInterfaceSubclass; */ 1, /* Boot Device subclass */
-    /*  uint8_t bInterfaceProtocol; */ 1, /* 1 == keyboard, 2 == mouse */
-    /*  uint8_t iInterface;         */ 0,
-    /* }*/
-
-    /* struct usb_hid_descriptor {        */
-    /*  uint8_t  bLength;                 */ sizeof(struct usb_hid_descriptor),
-    /*  uint8_t  bDescriptorType;         */ DT_HID,
-    /*  uint16_t bcdHID;                  */ 0x00, 0x01,
-    /*  uint8_t  bCountryCode;            */ 0,
-    /*  uint8_t  bNumDescriptors;         */ 1, /* We have only one REPORT */
-    /*  uint8_t  bReportDescriptorType;   */ DT_HID_REPORT,
-    /*  uint16_t wReportDescriptorLength; */ 63, 0x00,
-    /* }                                  */
-
-    /* struct usb_endpoint_descriptor { */
-    /*  uint8_t  bLength;             */ sizeof(struct usb_endpoint_descriptor),
-    /*  uint8_t  bDescriptorType;     */ DT_ENDPOINT,
-    /*  uint8_t  bEndpointAddress;    */ 0x81,  /* EP1 (IN) */
-    /*  uint8_t  bmAttributes;        */ 3,     /* Interrupt */
-    /*  uint16_t wMaxPacketSize;      */ 0x08, 0x00,
-    /*  uint8_t  bInterval;           */ 10, /* Every 10 ms */
-    /* }                              */
-  },
-
-  /*
-         0x09 DT_CONFIGURATION 0x3B 0x00 0x02 0x01 0x00 0xA0 0x17
-
-         0x09 DT_INTERFACE 0x00 0x00 0x01 0x03 0x01 0x01 0x00
-         0x09 DT_HID 0x00 0x01 0x00 0x01 0x22 0x41 0x00
-         0x07 DT_ENDPOINT 0x81 0x03 0x08 0x00 0x0A
-
-         0x09 DT_INTERFACE 0x01 0x00 0x01 0x03 0x01 0x02 0x00
-         0x09 DT_HID 0x00 0x01 0x00 0x01 0x22 0xB3 0x00
-         0x07 DT_ENDPOINT 0x82 0x03 0x08 0x00 0x0A
-  */
-};
+extern struct USBLink usbHidKbd;
 
 int main(void)
 {
@@ -236,7 +163,7 @@ int main(void)
     NVIC_SetPriority(PINA_IRQn, 0);
 
     /* Initialize USB */
-    usbMacInit(usbMacDefault(), &usb_device_descriptor, &usb_config_descriptor);
+    usbMacInit(usbMacDefault(), &usbHidKbd);
     usbPhyInit(usbPhyDefaultPhy(), usbMacDefault());
   }
 

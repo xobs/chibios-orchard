@@ -149,10 +149,39 @@ int palawanGpioInit(void) {
   return 0;
 }
 
+#include <string.h>
 #include "radio.h"
 #include "radio-protocol.h"
-int radioPing(KRadioDevice *radio, uint8_t addr, uint32_t timeout_ms,
-                  uint32_t len, void *payload);
+#include "usbmac.h"
+static int prot_kbd(uint8_t port,
+                    uint8_t src,
+                    uint8_t dst,
+                    uint8_t length,
+                    const void *data) {
+
+  (void)port;
+  (void)src;
+  (void)dst;
+  (void)length;
+
+  uint32_t report_32[2] = {};
+  const uint8_t *pkt = (const uint8_t *)data;
+  char *report = (char *)report_32;
+
+  if (!pkt[1])
+    report[2] = 0x04 + pkt[0] - 'a';
+
+  usbSendData(usbMacDefault(), 1, report_32, 8);
+
+  return 0;
+}
+radio_protocol("Keyboard", 2, prot_kbd);
+
+static void send_key(KRadioDevice *radio, uint8_t key, int val) {
+  uint8_t payload[2] = {key, val};
+
+  radioSend(radio, 0xff, 2, sizeof(payload), payload);
+}
 
 THD_WORKING_AREA(waThread, 128);
 #include "chprintf.h"
@@ -160,40 +189,31 @@ static THD_FUNCTION(palawan_gpio_thread, arg) {
 
   (void)arg;
   unsigned int i;
-  uint8_t samples[ARRAY_SIZE(inputs)];
+  uint32_t samples = 0;
 
   /* Pre-fetch the samples */
   for (i = 0; i < ARRAY_SIZE(inputs); i++) {
     struct palawan_input *input = &inputs[i];
-    samples[i] = !!palReadPad(input->port, input->gpionum);
+    samples |= (!!palReadPad(input->port, input->gpionum)) << i;
   }
 
   while (1) {
 
     for (i = 0; i < ARRAY_SIZE(inputs); i++) {
       struct palawan_input *input = &inputs[i];
-      uint8_t val;
+      uint32_t val;
 
 //      palSetPadMode(input->port, input->gpionum, PAL_MODE_INPUT_PULLUP);
 //      palSetPadMode(input->port, input->gpionum, PAL_MODE_INPUT);
-      val = !!palReadPad(input->port, input->gpionum);
-      if (val != samples[i]) {
-        chprintf(stream, "Port %d changed %d -> %d\r\n", i, samples[i], val);
-        samples[i] = val;
+      val = (!!palReadPad(input->port, input->gpionum)) << i;
+      if (val != (samples & (1 << i)) ) {
+        chprintf(stream, "Port %d changed -> %d\r\n", i, val);
+
+        samples &= ~(1 << i);
+        samples |= val;
 
         /* Keydown */
-        if (!val) {
-          uint8_t payload[] = {'Q'};
-          int ms;
-          ms = radioPing(radioDriver, 0xff, 50, sizeof(payload), payload);
-
-          if (ms > 0) {
-            chprintf(stream, "Ping: %d ms\r\n", ms);
-            *((volatile uint32_t *)0xf80000cc) = 0x80; /* Toggle green LED */
-          }
-          else
-            chprintf(stream, "Ping: timeout\r\n");
-        }
+        send_key(radioDriver, 'a' + i, !!val);
 
         //palSetPadMode(input->port, input->gpionum, PAL_MODE_OUTPUT_PUSHPULL);
         //palSetPad(input->port, input->gpionum);

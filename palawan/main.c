@@ -165,6 +165,10 @@ int main(void)
     /* Initialize USB */
     usbMacInit(usbMacDefault(), &usbHidKbd);
     usbPhyInit(usbPhyDefaultPhy(), usbMacDefault());
+
+    /* Start a DHCP server */
+    extern void dhcpServerStart(void);
+    dhcpServerStart();
   }
 
   else if (palawanModel() == palawan_tx) {
@@ -190,6 +194,12 @@ int main(void)
   radioSetDefaultHandler(default_radio_handler);
 
   radioStart(radioDriver);
+
+  if (palawanModel() == palawan_tx) {
+    /* Request a DHCP address */
+    extern int dhcpRequestAddress(int timeout_ms);
+    dhcpRequestAddress(100);
+  }
 
   evtTableHook(palawan_events, shell_terminated, shell_termination_handler);
   palawanShellRestart();

@@ -3,7 +3,6 @@
 #include "usbphy.h"
 #include "usbmac.h"
 #include "usblink.h"
-#include "palawan.h"
 
 static struct USBMAC default_mac;
 
@@ -105,38 +104,6 @@ void usbMacTransferSuccess(struct USBMAC *mac) {
     mac->data_out_left = 0;
     mac->data_out_max = 0;
     mac->data_out = NULL;
-  }
-}
-
-const char *usbPidToStr(uint8_t pid) {
-  switch (pid) {
-
-    /* Data packets */
-    case USB_PID_DATA0:     return "DATA0";
-    case USB_PID_DATA1:     return "DATA1";
-    case USB_PID_DATA2:     return "DATA2";
-    case USB_PID_MDATA:     return "MDATA";
-
-    /* Token packets, with CRC-5 */
-    case USB_PID_OUT:       return "OUT";
-    case USB_PID_IN:        return "IN";
-    case USB_PID_SOF:       return "SOF";
-    case USB_PID_SETUP:     return "SETUP";
-
-    /* One-byte packets, no CRC required */
-    case USB_PID_ACK:       return "ACK";
-    case USB_PID_NAK:       return "NAK";
-    case USB_PID_NYET:      return "NYET";
-    case USB_PID_STALL:     return "STALL";
-
-    /* Special cases (also no CRC?) */
-    case USB_PID_SPLIT:     return "SPLIT";
-    case USB_PID_PING:      return "PING";
-    case USB_PID_ERR:       return "ERR";
-
-    case USB_PID_RESERVED:  return "RESERVED";
-
-    default:                return "UNKNOWN";
   }
 }
 

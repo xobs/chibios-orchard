@@ -118,9 +118,6 @@ void usbMacSetLink(struct USBMAC *mac, struct USBLink *link);
 /* Get the default, system-wide USB MAC */
 struct USBMAC *usbMacDefault(void);
 
-/* Get the textual representation of the specified USB PID */
-const char *usbPidToStr(uint8_t pid);
-
 /* Get the PHY associated with this MAC */
 struct USBPHY *usbMacPhy(struct USBMAC *mac);
 
@@ -128,9 +125,5 @@ struct USBPHY *usbMacPhy(struct USBMAC *mac);
 void usbMacTransferSuccess(struct USBMAC *mac);
 
 int usbSendData(struct USBMAC *mac, int epnum, const void *data, int count);
-
-static inline int isValidPID(uint8_t pid) {
-  return ((pid ^ (pid >> 4)) & 0xf) == 0xf;
-}
 
 #endif /* __USB_MAC_H__ */

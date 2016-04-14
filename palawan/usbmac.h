@@ -72,10 +72,11 @@ struct usb_mac_setup_packet {
   uint16_t wLength;
 } __attribute__((packed));
 
+struct USBLink;
+
 struct USBMAC {
   struct USBPHY *phy;
-  const struct usb_device_descriptor *device_descriptor;
-  const struct usb_configuration_descriptor *configuration_descriptor;
+  struct USBLink *link;
   int phy_internal_is_ready;
 
   union {
@@ -85,6 +86,7 @@ struct USBMAC {
 
   const void *data_out;
   int32_t data_out_left;
+  int32_t data_out_max;
 
 #if (CH_USE_RT == TRUE)
   thread_reference_t thread;
@@ -94,7 +96,6 @@ struct USBMAC {
   uint8_t packet_type;  /* PACKET_SETUP, PACKET_IN, or PACKET_OUT */
 
   uint8_t address;      /* Our configured address */
-  uint8_t config_num;   /* Currently-selected configuration */
 
   uint8_t tok_addr;     /* Last token's address */
   uint8_t tok_epnum;    /* Last token's endpoint */
@@ -106,12 +107,13 @@ int usbMacProcess(struct USBMAC *mac,
                   uint32_t count);
 
 /* Initialize the given USB MAC */
-void usbMacInit(struct USBMAC *mac,
-                const struct usb_device_descriptor *device_descriptor,
-                const struct usb_configuration_descriptor *config);
+void usbMacInit(struct USBMAC *mac, struct USBLink *link);
 
 /* Set the given MAC to use the given PHY */
 void usbMacSetPhy(struct USBMAC *mac, struct USBPHY *phy);
+
+/* Set the USB link to the provided device */
+void usbMacSetLink(struct USBMAC *mac, struct USBLink *link);
 
 /* Get the default, system-wide USB MAC */
 struct USBMAC *usbMacDefault(void);

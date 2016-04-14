@@ -7,62 +7,6 @@
 
 static struct USBMAC default_mac;
 
-static const uint8_t report_descriptor[] = {
-  0x05, 0x01, /* USAGE_PAGE (Generic Desktop)           */
-  0x09, 0x06, /* USAGE (Keyboard)                       */
-  0xa1, 0x01, /* COLLECTION (Application)               */
-  0x05, 0x07, /*   USAGE_PAGE (Keyboard)                */
-  0x19, 0xe0, /*   USAGE_MINIMUM (Keyboard LeftControl) */
-  0x29, 0xe7, /*   USAGE_MAXIMUM (Keyboard Right GUI)   */
-  0x15, 0x00, /*   LOGICAL_MINIMUM (0)                  */
-  0x25, 0x01, /*   LOGICAL_MAXIMUM (1)                  */
-  0x75, 0x01, /*   REPORT_SIZE (1)                      */
-  0x95, 0x08, /*   REPORT_COUNT (8)                     */
-  0x81, 0x02, /*   INPUT (Data,Var,Abs)                 */
-  0x95, 0x01, /*   REPORT_COUNT (1)                     */
-  0x75, 0x08, /*   REPORT_SIZE (8)                      */
-  0x81, 0x03, /*   INPUT (Cnst,Var,Abs)                 */
-  0x95, 0x05, /*   REPORT_COUNT (5)                     */
-  0x75, 0x01, /*   REPORT_SIZE (1)                      */
-  0x05, 0x08, /*   USAGE_PAGE (LEDs)                    */
-  0x19, 0x01, /*   USAGE_MINIMUM (Num Lock)             */
-  0x29, 0x05, /*   USAGE_MAXIMUM (Kana)                 */
-  0x91, 0x02, /*   OUTPUT (Data,Var,Abs)                */
-  0x95, 0x01, /*   REPORT_COUNT (1)                     */
-  0x75, 0x03, /*   REPORT_SIZE (3)                      */
-  0x91, 0x03, /*   OUTPUT (Cnst,Var,Abs)                */
-  0x95, 0x06, /*   REPORT_COUNT (6)                     */
-  0x75, 0x08, /*   REPORT_SIZE (8)                      */
-  0x15, 0x00, /*   LOGICAL_MINIMUM (0)                  */
-  0x25, 0x65, /*   LOGICAL_MAXIMUM (101)                */
-  0x05, 0x07, /*   USAGE_PAGE (Keyboard)                */
-  0x19, 0x00, /*   USAGE_MINIMUM (Reserved)             */
-  0x29, 0x65, /*   USAGE_MAXIMUM (Keyboard Application) */
-  0x81, 0x00, /*   INPUT (Data,Ary,Abs)                 */
-  0xc0    /* END_COLLECTION                         */
-};
-
-#if 0
-static const uint8_t crc5Table4[] =
-{
-  0x00, 0x0E, 0x1C, 0x12, 0x11, 0x1F, 0x0D, 0x03,
-  0x0B, 0x05, 0x17, 0x19, 0x1A, 0x14, 0x06, 0x08
-};
-static const uint8_t crc5Table0[] =
-{
-  0x00, 0x16, 0x05, 0x13, 0x0A, 0x1C, 0x0F, 0x19,
-  0x14, 0x02, 0x11, 0x07, 0x1E, 0x08, 0x1B, 0x0D
-};
-
-// Taken from http://www.michael-joost.de/crc5check.pdf
-static int crc5Check(const unsigned char * data) {
-  unsigned char b = data[0] ^ 0x1F;
-  unsigned char crc = crc5Table4[b & 0x0F] ^ crc5Table0[(b >> 4) & 0x0F];
-  b = data[1] ^ crc;
-  return (crc5Table4[b & 0x0F] ^ crc5Table0[(b>>4) & 0x0F]) != 0x06;
-}
-#endif
-
 static uint16_t crc16_add(uint16_t crc, uint8_t c, uint16_t poly)
 {
   uint8_t  i;
@@ -97,17 +41,26 @@ static void usb_mac_process_data(struct USBMAC *mac) {
     return;
 
   /* If there's no data to send, then don't send any */
-  if (mac->data_out_left < 0)
+  if (!mac->data_out)
     return;
 
+  /* If we've sent all of our data, then there's nothing else to send */
+  if ((mac->data_out_left == 0) && (mac->data_out_max == 0)) {
+    mac->data_out = NULL;
+    return;
+  }
+
+  /* Pick the correct PID, DATA0 or DATA1 */
   if (mac->data_buffer++ & 1)
     packet->pid = USB_PID_DATA1;
   else
     packet->pid = USB_PID_DATA0;
 
   /* If there's no data, prepare a special NULL packet */
-  if (mac->data_out_left == 0) {
-    mac->data_out_left = -1;
+  if ((mac->data_out_left <= 0) || (mac->data_out_max <= 0)) {
+    mac->data_out_left = 0;
+    mac->data_out_max = 0;
+    mac->data_out = NULL;
     packet->data[0] = 0;
     packet->data[1] = 0;
     usbPhyWritePrepare(mac->phy, raw_data_32, 2 + 1);
@@ -119,6 +72,10 @@ static void usb_mac_process_data(struct USBMAC *mac) {
     packet->size = 8;
   else
     packet->size = mac->data_out_left;
+
+  /* Limit the amount of data transferred to data_out_max */
+  if (packet->size > mac->data_out_max)
+    packet->size = mac->data_out_max;
 
   /* Copy over data bytes */
   memcpy(packet->data, mac->data_out, packet->size);
@@ -139,8 +96,16 @@ void usbMacTransferSuccess(struct USBMAC *mac) {
    * to this function with mac->data_out_left == 0.  This will send
    * a NULL packet, which indicates end-of-transfer.
    */
-  mac->data_out_left -= 8;
-  mac->data_out += 8;
+  if (mac->data_out) {
+    mac->data_out_left -= 8;
+    mac->data_out_max -= 8;
+    mac->data_out += 8;
+  }
+  if ((mac->data_out_left < 0) || (mac->data_out_max < 0)) {
+    mac->data_out_left = 0;
+    mac->data_out_max = 0;
+    mac->data_out = NULL;
+  }
 }
 
 const char *usbPidToStr(uint8_t pid) {
@@ -175,16 +140,14 @@ const char *usbPidToStr(uint8_t pid) {
   }
 }
 
-static int usb_mac_send_data(struct USBMAC *mac, const void *data, int count) {
-
-  /* Don't allow for dereferencing NULL pointers.  Probably an uninteresting
-   * check, because there's no MMU already.
-   */
-  if (!data && count)
-    return -1;
+static int usb_mac_send_data(struct USBMAC *mac,
+                             const void *data,
+                             int count,
+                             int max) {
 
   mac->data_out = data;
   mac->data_out_left = count;
+  mac->data_out_max = max;
 
   return 0;
 }
@@ -194,7 +157,7 @@ int usbSendData(struct USBMAC *mac, int epnum, const void *data, int count) {
   (void)epnum;
   int ret;
 
-  ret = usb_mac_send_data(mac, data, count);
+  ret = usb_mac_send_data(mac, data, count, count);
   if (ret)
     return ret;
 
@@ -212,6 +175,7 @@ static int usb_mac_process_setup_read(struct USBMAC *mac,
 {
   const void *response = NULL;
   uint32_t len = 0;
+  struct USBLink *link = mac->link;
 
   switch (setup->bmRequestType) {
   case 0x80:  /* Device-to-host, standard, read from device */
@@ -224,30 +188,17 @@ static int usb_mac_process_setup_read(struct USBMAC *mac,
 
       /* GET_DEVICE_DESCRIPTOR */
       case 1:
-        len = mac->device_descriptor->bLength;
-        response = mac->device_descriptor;
+        len = link->getDeviceDescriptor(link, setup->wValueH, &response);
         break;
 
       /* GET_CONFIGURATION_DESCRIPTOR */
       case 2:
-        len = mac->configuration_descriptor->wTotalLength;
-        response = mac->configuration_descriptor;
+        len = link->getConfigurationDescriptor(link, setup->wValueH, &response);
         break;
 
       /* GET_STRING_DESCRIPTOR */
       case 3:
-        if (setup->wValueH == 0) {
-          static const uint8_t en_us[] = {0x04, DT_STRING, 0x09, 0x04};
-          len = sizeof(en_us);
-          response = en_us;
-        }
-        else {
-          static const uint8_t str[] = {
-              0x06, DT_STRING, 0x65, 0x00, 0x66, 0x00,
-          };
-          len = sizeof(str);
-          response = str;
-        }
+        len = link->getStringDescriptor(link, setup->wValueH, &response);
         break;
 
       }
@@ -258,11 +209,9 @@ static int usb_mac_process_setup_read(struct USBMAC *mac,
     switch(setup->bRequest) {
 
     /* GET_CLASS_DESCRIPTOR */
-    case 6: {
-      len = sizeof(report_descriptor);
-      response = report_descriptor;
+    case 6:
+      len = link->getClassDescriptor(link, setup->wValueH, &response);
       break;
-      }
     }
     break;
 
@@ -297,18 +246,17 @@ static int usb_mac_process_setup_read(struct USBMAC *mac,
     break;
   }
 
-  if (len > setup->wLength)
-    len = setup->wLength;
-
-  usb_mac_send_data(mac, response, len);
+  usb_mac_send_data(mac, response, len, setup->wLength);
   return 0;
 }
 
 static int usb_mac_process_setup_write(struct USBMAC *mac,
                                        const struct usb_mac_setup_packet *setup)
 {
-  const void *response = NULL;
+  const void *response = (const void *)-1;
   uint8_t len = 0;
+  uint8_t max = 1;
+  struct USBLink *link = mac->link;
 
   switch (setup->bmRequestType) {
   case 0x00:  /* Device-to-host, standard, write to host */
@@ -316,8 +264,9 @@ static int usb_mac_process_setup_write(struct USBMAC *mac,
     case 5: /* SET_ADDRESS */
       mac->address = setup->wValue;
       break;
+
     case 9: /* SET_CONFIGURATION */
-      mac->config_num = setup->wValue;
+      link->config_num = setup->wValue;
       break;
     }
     break;
@@ -364,7 +313,7 @@ static int usb_mac_process_setup_write(struct USBMAC *mac,
   /* We must always send a response packet.  If there's ever a time when
    * we shouldn't send a packet, simply "return" rather than "break" above.
    */
-  usb_mac_send_data(mac, response, len);
+  usb_mac_send_data(mac, response, len, max);
 
   return 0;
 }
@@ -443,8 +392,9 @@ int usbMacProcess(struct USBMAC *mac,
 
   case USB_PID_ACK:
 #if (CH_USE_RT == TRUE)
-    if (mac->thread && mac->data_out_left <= 0) {
-      mac->data_out_left = -1;
+    if (mac->thread && !mac->data_out) {
+      mac->data_out_left = 0;
+      mac->data_out_max = 0;
       mac->data_out = NULL;
       osalThreadResumeS(&mac->thread, MSG_OK);
     }
@@ -463,19 +413,22 @@ int usbMacProcess(struct USBMAC *mac,
   return 0;
 }
 
-void usbMacInit(struct USBMAC *mac,
-                const struct usb_device_descriptor *device_descriptor,
-                const struct usb_configuration_descriptor *config) {
+void usbMacInit(struct USBMAC *mac, struct USBLink *link) {
 
-  mac->device_descriptor = device_descriptor;
-  mac->configuration_descriptor = config;
+  mac->link = link;
   mac->data_out = NULL;
   mac->data_out_left = 0;
+  mac->data_out_max = 0;
 }
 
 void usbMacSetPhy(struct USBMAC *mac, struct USBPHY *phy) {
 
   mac->phy = phy;
+}
+
+void usbMacSetLink(struct USBMAC *mac, struct USBLink *link) {
+
+  mac->link = link;
 }
 
 struct USBPHY *usbMacPhy(struct USBMAC *mac) {

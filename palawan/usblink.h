@@ -1,7 +1,7 @@
 #ifndef __USB_LINK_H__
 #define __USB_LINK_H__
 
-struct USBMAC;
+#include <stdint.h>
 
 /* Various Descriptor Types */
 #define DT_DEVICE 0x01
@@ -83,33 +83,26 @@ struct usb_hid_descriptor {
   uint16_t wReportDescriptorLength; /* Length of the HID/PID report descriptor */
 } __attribute__((packed));
 
+
+/* Each of these functions are called by the USB system to get a buffer.
+ * On return, *data will point to the buffer, and the number of bytes
+ * in the buffer will be returned.
+ *
+ * Frequently, multiple descriptors can exist.  The index into the
+ * descriptor is returned in 'num'.
+ *
+ * If the data does not exist, return 0.
+ */
+struct USBLink;
+typedef int (*get_usb_descriptor_t)(struct USBLink *link,
+                                    uint32_t num,
+                                    const void **data);
 struct USBLink {
-  struct USBMAC *mac;
-  const struct usb_link_device_descriptor *device_descriptor;
-  const struct usb_link_configuration_descriptor *configuration_descriptor;
-  int phy_internal_is_ready;
-
-  union {
-    uint8_t data_in[8];
-    struct usb_mac_setup_packet data_setup;
-  };
-
-  const void *data_out;
-  int32_t data_out_left;
-
-  /* Data that's ready to be sent */
-  struct USBPHYInternalData phy_internal;
-
-  char data_in_size;
-
-  uint8_t data_buffer;  /* Whether we're sending DATA0 or DATA1 */
-  uint8_t packet_type;  /* PACKET_SETUP, PACKET_IN, or PACKET_OUT */
-
-  uint8_t address;      /* Our configured address */
-  uint8_t config_num;   /* Currently-selected configuration */
-
-  uint8_t tok_addr;     /* Last token's address */
-  uint8_t tok_epnum;    /* Last token's endpoint */
+  get_usb_descriptor_t getStringDescriptor;
+  get_usb_descriptor_t getDeviceDescriptor;
+  get_usb_descriptor_t getConfigurationDescriptor;
+  get_usb_descriptor_t getClassDescriptor;
+  int config_num;
 };
 
 #endif /* __USB_LINK_H__ */

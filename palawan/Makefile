@@ -129,7 +129,7 @@ CSRC = main.c \
 # Include the shell, and commands, for full OS.
 ifeq ($(CH_USE_RT),TRUE)
 CSRC += $(CHIBIOS)/os/various/shell.c \
-        $(wildcard cmd-*.c)
+        $(wildcard cmd-*.c) \
         $(wildcard prot-*.c)
 endif
 

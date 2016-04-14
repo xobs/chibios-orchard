@@ -3,10 +3,6 @@
 #include "hal.h"
 #include "usbphy.h"
 #include "usbmac.h"
-#include "palawan.h"
-
-#define USB_FS_RATE 12000000 /* 12 MHz */
-#define USB_LS_RATE (USB_FS_RATE / 8) /* 1.5 MHz */
 
 /* Pre-processed internal data structures for fast responses */
 static struct USBPHYInternalData phyAck;

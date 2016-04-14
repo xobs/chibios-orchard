@@ -397,7 +397,7 @@ void radioStart(KRadioDevice *radio) {
   radio_set_modulation(radio, modulation_fsk_gaussian_bt_0p3);
   radio_set_packet_mode(radio);
   radio_set_broadcast_address(radio, 255);
-  radio_set_node_address(radio, 1);
+  radio_set_node_address(radio, 0);
 
   /* Drain the Fifo */
   while (radio_get(radio, RADIO_IrqFlags2) & IrqFlags2_FifoNotEmpty)

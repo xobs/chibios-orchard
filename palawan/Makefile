@@ -114,6 +114,7 @@ CSRC = main.c \
        radio-protocol.c \
        usbphy.c \
        usbmac.c \
+       usbhidkbd.c \
        hex.c \
        $(STARTUPSRC) \
        $(PORTSRC) \

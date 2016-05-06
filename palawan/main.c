@@ -137,14 +137,14 @@ int main(void)
   chSysInit();
 #endif
 
-#if 0
+#if 1
     osalSysLock();
   while (1) {
     *((volatile uint32_t *)0xf80000cc) = 0x80; /* Toggle green LED */
     usbPhyWriteTest(usbPhyTestPhy());
 //    chThdSleepMilliseconds(1000);
     int i;
-    for (i = 0; i < 1000; i++)
+    for (i = 0; i < 1000000; i++)
       asm("nop");
   }
     osalSysUnlock();

@@ -4,10 +4,6 @@
 #include "usbphy.h"
 #include "usbmac.h"
 
-/* Pre-processed internal data structures for fast responses */
-static struct USBPHYInternalData phyAck;
-static struct USBPHYInternalData phyNak;
-
 /* We need to reverse bits.  Use a 256-byte lookup table to speed things up. */
 const uint8_t bit_reverse_table_256[] = {
 #define R2(n)     n,     n + 2*64,     n + 1*64,     n + 3*64
@@ -94,13 +90,14 @@ static void usbCaptureI(struct USBPHY *phy) {
   ret = usbPhyReadI(phy, (uint32_t *)samples);
 
   if (ret == USB_DIP_IN) {
-    if (!phy->data_is_queued) {
-      usbPhyWriteI(phy, &phyNak);
+    if (!phy->queued_size) {
+      uint8_t pkt[] = {USB_PID_NAK};
+      usbPhyWriteI(phy, pkt, sizeof(pkt));
       goto out;
     }
 
     phy->byte_queue_head++;
-    usbPhyWriteI(phy, &phy->queued_data);
+    usbPhyWriteI(phy, phy->queued_data, phy->queued_size);
     goto out;
   }
   else if (ret == USB_DIP_SETUP) {
@@ -113,15 +110,16 @@ static void usbCaptureI(struct USBPHY *phy) {
   }
   else if (ret == USB_DIP_ACK) {
     /* Allow the next byte to be sent */
+    phy->queued_size = 0;
     usbMacTransferSuccess(phy->mac);
     phy->byte_queue_head++;
-    phy->data_is_queued = 0;
     goto out;
   }
 
   else if ((ret == USB_DIP_DATA0) || (ret == USB_DIP_DATA1)) {
     phy->byte_queue_head++;
-    usbPhyWriteI(phy, &phyAck);
+    uint8_t pkt[] = {USB_PID_ACK};
+    usbPhyWriteI(phy, pkt, sizeof(pkt));
     goto out;
   }
 
@@ -139,42 +137,6 @@ out:
  * to this process, and we need to respond as quickly as possible.
  */
 
-/*
-   This LUT pre-computes various parameters that vary depending on the
-   number of bits to copy.
-
-   The internal data copies up to 11 bytes of USB packet data into three
-   "cells" in the USBPHY struct.  Each cell contains up to 32-bits of data,
-   plus an indicator of how much data is present in that cell.
-
-   The first three bytes of the LUT are the number of bits in each of the
-   three cells.  As each cell has a different amount of data, each cell
-   gets its own bit count.
-
-   The next byte of LUT indicates which cell to start on.
-
-   The final three bytes of LUT indicate where, in the three-word buffer,
-   each cell will pull data from.
- */
-static uint8_t bit_num_lut[12][7] = {
-  /* Bits per cell    Starting cell   Source array */
-  {  0,  0,  0,       0,              0, 0, 0 },
-
-  {  8,  0,  0,       1,              0, 0, 0 },
-  { 16,  0,  0,       1,              0, 0, 0 },
-  { 24,  0,  0,       1,              0, 0, 0 },
-  { 32,  0,  0,       1,              0, 0, 0 },
-
-  {  8, 32,  0,       2,              1, 0, 0 },
-  { 16, 32,  0,       2,              1, 0, 0 },
-  { 24, 32,  0,       2,              1, 0, 0 },
-  { 32, 32,  0,       2,              1, 0, 0 },
-
-  {  8, 32, 32,       3,              2, 1, 0 },
-  { 16, 32, 32,       3,              2, 1, 0 },
-  { 24, 32, 32,       3,              2, 1, 0 },
-};
-
 /* Expose the "rev" instruction to C */
 #ifdef REVERSE_BITS
 static inline __attribute__((always_inline)) uint32_t __rev(uint32_t val) {
@@ -185,59 +147,40 @@ static inline __attribute__((always_inline)) uint32_t __rev(uint32_t val) {
 #define __rev(x) x
 #endif
 
-static int usb_phy_write_prepare_internal(struct USBPHYInternalData *internal,
-                                          const uint32_t buffer[3],
-                                          int size) {
-  uint8_t *num_bits = bit_num_lut[size];
-  uint32_t *scratch = internal->scratch;
+int usbPhyWritePrepare(struct USBPHY *phy, const uint32_t buffer[3], int size) {
 
-  /* Copy the number of bits in each slot from the LUT. */
-  scratch[1] = *num_bits++;
-  scratch[3] = *num_bits++;
-  scratch[5] = *num_bits++;
-
-  /* Copy the initial packet number over */
-  scratch[6] = *num_bits++;
-
-  /* Copy the actual words over, and invert them */
-  scratch[0] = __rev(~buffer[*num_bits++]);
-  scratch[2] = __rev(~buffer[*num_bits++]);
-  scratch[4] = __rev(~buffer[*num_bits++]);
-  
+  phy->queued_data = buffer;
+  phy->queued_size = size;
   return 0;
 }
 
-int usbPhyWritePrepare(struct USBPHY *phy,
-                       const uint32_t buffer[3],
-                       int size) {
-
-  int ret;
-  ret = usb_phy_write_prepare_internal(&phy->queued_data, buffer, size);
-  phy->data_is_queued = 1;
-  return ret;
-}
 
 void usbPhyWriteTest(struct USBPHY *phy) {
 
   uint8_t buffer[] = {
 //    0xC3, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, 0xDD, 0x94,
 //    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-//    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
 //    0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 
 //    0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
 //    0xc3, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xaa, 0x55,
 //    0xd2
 //    0x00
-     0xC3, 0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 0xFF, 0x00, 0xE9, 0xA4,
+//     0xC3, 0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 0xFF, 0x00, 0xE9, 0xA4,
   };
-  uint32_t test_num = sizeof(buffer);
+  uint32_t test_num = 12;
 
-  usbPhyWritePrepare(phy, (void *)buffer, test_num);
-  usbPhyWriteI(phy, &phy->queued_data);
-
-  test_num++;
-  if (test_num > sizeof(buffer))
+  if (test_num > sizeof(buffer)) {
+    uint8_t buffer[] = {
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    };
+    usbPhyWriteI(phy, buffer, sizeof(buffer));
     test_num = 1;
+  }
+  else {
+    usbPhyWriteI(phy, buffer, test_num);
+    test_num++;
+  }
 }
 
 #ifdef TEST_PHY
@@ -322,15 +265,6 @@ static THD_FUNCTION(usb_worker_thread, arg) {
 #endif
 
 void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac) {
-
-  uint32_t buffer[3] = {};
-  uint8_t *buffer_b = (uint8_t *)buffer;
-
-  buffer_b[0] = USB_PID_ACK;
-  usb_phy_write_prepare_internal(&phyAck, buffer, 1);
-
-  buffer_b[0] = USB_PID_NAK;
-  usb_phy_write_prepare_internal(&phyNak, buffer, 1);
 
   phy->mac = mac;
   usbMacSetPhy(mac, phy);

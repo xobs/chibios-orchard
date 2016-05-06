@@ -50,8 +50,8 @@ struct USBPHY {
   uint32_t spSave;  /* The stack pointer is stored here during reading */
   uint32_t bufSave; /* The output buffer is stored here during reading */
 
-  struct USBPHYInternalData queued_data;
-  int data_is_queued;
+  const void *queued_data;
+  uint32_t queued_size;
 
 #if (CH_USE_RT == TRUE)
   thread_reference_t thread;
@@ -68,16 +68,14 @@ int usbPhyResetStatistics(struct USBPHY *phy);
 
 void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac);
 int usbPhyReadI(const struct USBPHY *phy, uint32_t samples[3]);
-void usbPhyWriteI(const struct USBPHY *phy, struct USBPHYInternalData *data);
+void usbPhyWriteI(const struct USBPHY *phy, const void *buffer, uint32_t count);
 void usbPhyWriteTestPattern(const struct USBPHY *phy);
 void usbPhyWriteTest(struct USBPHY *phy);
 int usbProcessIncoming(struct USBPHY *phy);
 int usbPhyQueue(struct USBPHY *phy, const uint8_t *buffer, int buffer_size);
 int usbCapture(struct USBPHY *phy);
 int usbPhyInitialized(struct USBPHY *phy);
-int usbPhyWritePrepare(struct USBPHY *phy,
-                       const uint32_t buffer[3],
-                       int size);
+int usbPhyWritePrepare(struct USBPHY *phy, const uint32_t buffer[3], int size);
 
 void usbPhyAttach(struct USBPHY *phy);
 void usbPhyDetach(struct USBPHY *phy);

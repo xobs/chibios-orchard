@@ -36,7 +36,7 @@ static void usb_mac_process_data(struct USBMAC *mac) {
   uint16_t crc;
 
   /* Don't allow us to re-prepare data */
-  if (mac->phy->data_is_queued)
+  if (mac->phy->queued_size)
     return;
 
   /* If there's no data to send, then don't send any */

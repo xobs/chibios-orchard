@@ -137,8 +137,8 @@ int main(void)
   chSysInit();
 #endif
 
-#if 1
-    osalSysLock();
+#if 0
+  osalSysLock();
   while (1) {
     *((volatile uint32_t *)0xf80000cc) = 0x80; /* Toggle green LED */
     usbPhyWriteTest(usbPhyTestPhy());
@@ -147,7 +147,7 @@ int main(void)
     for (i = 0; i < 1000000; i++)
       asm("nop");
   }
-    osalSysUnlock();
+  osalSysUnlock();
 #endif
 
   if (palawanModel() == palawan_rx) {

@@ -45,7 +45,6 @@ struct usb_packet {
       uint8_t data[10]; /* Including CRC */
     };
     uint8_t raw_data[11];
-    uint32_t raw_data_32[3];
   };
   uint8_t size; /* Not including pid (so may be 0) */
   /* Checksum omitted */
@@ -91,6 +90,9 @@ struct USBMAC {
 #if (CH_USE_RT == TRUE)
   thread_reference_t thread;
 #endif
+
+  struct usb_packet packet; /* Currently-queued packet */
+  int packet_queued;    /* Whether a packet is queued */
 
   uint8_t data_buffer;  /* Whether we're sending DATA0 or DATA1 */
   uint8_t packet_type;  /* PACKET_SETUP, PACKET_IN, or PACKET_OUT */

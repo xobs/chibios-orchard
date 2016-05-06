@@ -31,12 +31,10 @@ static uint16_t crc16(const uint8_t *data, uint32_t count,
 
 static void usb_mac_process_data(struct USBMAC *mac) {
 
-  uint32_t raw_data_32[3];
-  struct usb_packet *packet = (struct usb_packet *)raw_data_32;
   uint16_t crc;
 
   /* Don't allow us to re-prepare data */
-  if (mac->phy->queued_size)
+  if (mac->packet_queued)
     return;
 
   /* If there's no data to send, then don't send any */
@@ -51,44 +49,47 @@ static void usb_mac_process_data(struct USBMAC *mac) {
 
   /* Pick the correct PID, DATA0 or DATA1 */
   if (mac->data_buffer++ & 1)
-    packet->pid = USB_PID_DATA1;
+    mac->packet.pid = USB_PID_DATA1;
   else
-    packet->pid = USB_PID_DATA0;
+    mac->packet.pid = USB_PID_DATA0;
 
   /* If there's no data, prepare a special NULL packet */
   if ((mac->data_out_left <= 0) || (mac->data_out_max <= 0)) {
     mac->data_out_left = 0;
     mac->data_out_max = 0;
     mac->data_out = NULL;
-    packet->data[0] = 0;
-    packet->data[1] = 0;
-    usbPhyWritePrepare(mac->phy, raw_data_32, 2 + 1);
+    mac->packet.data[0] = 0;
+    mac->packet.data[1] = 0;
+    usbPhyWritePrepare(mac->phy, &mac->packet, 2 + 1);
     return;
   }
 
   /* Keep the packet size to 8 bytes max */
   if (mac->data_out_left > 8)
-    packet->size = 8;
+    mac->packet.size = 8;
   else
-    packet->size = mac->data_out_left;
+    mac->packet.size = mac->data_out_left;
 
   /* Limit the amount of data transferred to data_out_max */
-  if (packet->size > mac->data_out_max)
-    packet->size = mac->data_out_max;
+  if (mac->packet.size > mac->data_out_max)
+    mac->packet.size = mac->data_out_max;
 
   /* Copy over data bytes */
-  memcpy(packet->data, mac->data_out, packet->size);
+  memcpy(mac->packet.data, mac->data_out, mac->packet.size);
 
   /* Calculate and copy the crc16 */
-  crc = ~crc16(packet->data, packet->size, 0xffff, 0xa001);
-  packet->data[packet->size++] = crc;
-  packet->data[packet->size++] = crc >> 8;
+  crc = ~crc16(mac->packet.data, mac->packet.size, 0xffff, 0xa001);
+  mac->packet.data[mac->packet.size++] = crc;
+  mac->packet.data[mac->packet.size++] = crc >> 8;
 
   /* Prepare the packet, including the PID at the end */
-  usbPhyWritePrepare(mac->phy, raw_data_32, packet->size + 1);
+  usbPhyWritePrepare(mac->phy, &mac->packet, mac->packet.size + 1);
+  mac->packet_queued = 1;
 }
 
 void usbMacTransferSuccess(struct USBMAC *mac) {
+
+  mac->packet_queued = 0;
 
   /* Reduce the amount of data left.
    * If the packet is divisible by 8, this will cause one more call

@@ -85,7 +85,7 @@ static void usbCaptureI(struct USBPHY *phy) {
   /* Toggle the green LED */
   //*((volatile uint32_t *)0xf80000cc) = 0x80;
 
-  samples = (uint8_t *)phy->byte_queue[phy->byte_queue_head];
+  samples = (uint8_t *)phy->read_queue[phy->read_queue_head];
 
   ret = usbPhyReadI(phy, (uint32_t *)samples);
 
@@ -96,28 +96,28 @@ static void usbCaptureI(struct USBPHY *phy) {
       goto out;
     }
 
-    phy->byte_queue_head++;
+    phy->read_queue_head++;
     usbPhyWriteI(phy, phy->queued_data, phy->queued_size);
     goto out;
   }
   else if (ret == USB_DIP_SETUP) {
-    phy->byte_queue_head++;
+    phy->read_queue_head++;
     goto out;
   }
   else if (ret == USB_DIP_OUT) {
-    phy->byte_queue_head++;
+    phy->read_queue_head++;
     goto out;
   }
   else if (ret == USB_DIP_ACK) {
     /* Allow the next byte to be sent */
     phy->queued_size = 0;
     usbMacTransferSuccess(phy->mac);
-    phy->byte_queue_head++;
+    phy->read_queue_head++;
     goto out;
   }
 
   else if ((ret == USB_DIP_DATA0) || (ret == USB_DIP_DATA1)) {
-    phy->byte_queue_head++;
+    phy->read_queue_head++;
     uint8_t pkt[] = {USB_PID_ACK};
     usbPhyWriteI(phy, pkt, sizeof(pkt));
     goto out;
@@ -147,7 +147,7 @@ static inline __attribute__((always_inline)) uint32_t __rev(uint32_t val) {
 #define __rev(x) x
 #endif
 
-int usbPhyWritePrepare(struct USBPHY *phy, const uint32_t buffer[3], int size) {
+int usbPhyWritePrepare(struct USBPHY *phy, const void *buffer, int size) {
 
   phy->queued_data = buffer;
   phy->queued_size = size;
@@ -160,15 +160,15 @@ void usbPhyWriteTest(struct USBPHY *phy) {
   uint8_t buffer[] = {
 //    0xC3, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, 0xDD, 0x94,
 //    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+//    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
 //    0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 
 //    0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
 //    0xc3, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xaa, 0x55,
 //    0xd2
 //    0x00
-//     0xC3, 0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 0xFF, 0x00, 0xE9, 0xA4,
+     0xC3, 0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 0xFF, 0x00, 0xE9, 0xA4,
   };
-  uint32_t test_num = 12;
+  static uint32_t test_num = 1;
 
   if (test_num > sizeof(buffer)) {
     uint8_t buffer[] = {
@@ -220,8 +220,8 @@ void usbPhyWorker(struct USBPHY *phy) {
   }
   return;
 #else
-  while (phy->byte_queue_tail != phy->byte_queue_head) {
-    uint8_t *in_ptr = (uint8_t *)phy->byte_queue[phy->byte_queue_tail];
+  while (phy->read_queue_tail != phy->read_queue_head) {
+    uint8_t *in_ptr = (uint8_t *)phy->read_queue[phy->read_queue_tail];
     uint8_t bytes[12];
     int32_t data_left;
     uint32_t data_copied;
@@ -240,7 +240,7 @@ void usbPhyWorker(struct USBPHY *phy) {
     }
 
     // Finally, move on to the next packet
-    phy->byte_queue_tail++;
+    phy->read_queue_tail++;
   }
 #endif
   return;
@@ -281,7 +281,7 @@ void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac) {
 void usbPhyDrainIfNecessary(void) {
   struct USBPHY *phy = &defaultUsbPhy;
 
-  if (phy->byte_queue_tail != phy->byte_queue_head)
+  if (phy->read_queue_tail != phy->read_queue_head)
     osalThreadResumeI(&phy->thread, MSG_OK);
 }
 #endif

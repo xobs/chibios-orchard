@@ -3,23 +3,6 @@
 
 struct USBMAC;
 
-struct USBPHYInternalData {
-  uint32_t padding[2];
-  union {
-    uint32_t scratch[7];    /* Scratch buffer, as used by usb reader/writer */
-    struct {
-      uint8_t data1[4];     /* Actual data of the first word */
-      uint32_t bits1;       /* Number of bits in the first word */
-      uint8_t data2[4];     /* Actual data of the second word */
-      uint32_t bits2;       /* Number of bits in the third word */
-      uint8_t data3[4];     /* Actual data of the third word */
-      uint32_t bits3;       /* Number of bits in the third word */
-      uint32_t first_word;  /* Which word to start with (1, 2, or 3) */
-    };
-  };
-  uint32_t stack_pointer_temp;  /* Temporary storage for sp during call */
-};
-
 /* Make sure this struct is not in flash.  Reads from flash are non-
  * -deterministic, and can have a variable amount of delay.  Also, make
  * sure it's not declared "const", as the "spSave" field is written by
@@ -59,9 +42,9 @@ struct USBPHY {
   event_source_t data_available;
 #endif
 
-  uint32_t byte_queue[256][3];
-  uint8_t byte_queue_head;
-  uint8_t byte_queue_tail;
+  uint32_t read_queue[256][3];
+  uint8_t read_queue_head;
+  uint8_t read_queue_tail;
 } __attribute__((packed));
 
 int usbPhyResetStatistics(struct USBPHY *phy);
@@ -75,7 +58,7 @@ int usbProcessIncoming(struct USBPHY *phy);
 int usbPhyQueue(struct USBPHY *phy, const uint8_t *buffer, int buffer_size);
 int usbCapture(struct USBPHY *phy);
 int usbPhyInitialized(struct USBPHY *phy);
-int usbPhyWritePrepare(struct USBPHY *phy, const uint32_t buffer[3], int size);
+int usbPhyWritePrepare(struct USBPHY *phy, const void *buffer, int size);
 
 void usbPhyAttach(struct USBPHY *phy);
 void usbPhyDetach(struct USBPHY *phy);

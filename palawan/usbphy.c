@@ -4,19 +4,7 @@
 #include "usbphy.h"
 #include "usbmac.h"
 
-/* We need to reverse bits.  Use a 256-byte lookup table to speed things up. */
-const uint8_t bit_reverse_table_256[] = {
-#define R2(n)     n,     n + 2*64,     n + 1*64,     n + 3*64
-#define R4(n) R2(n), R2(n + 2*16), R2(n + 1*16), R2(n + 3*16)
-#define R6(n) R4(n), R4(n + 2*4 ), R4(n + 1*4 ), R4(n + 3*4 )
-  R6(0), R6(2), R6(1), R6(3)
-#undef R2
-#undef R4
-#undef R6
-};
-
 static struct USBPHY defaultUsbPhy = {
-#ifndef TEST_PHY
   /* PTB0 */
   .usbdnIAddr = &FGPIOB->PDIR,
   .usbdnSAddr = &FGPIOB->PSOR,
@@ -32,42 +20,6 @@ static struct USBPHY defaultUsbPhy = {
   .usbdpDAddr = &FGPIOA->PDDR,
   .usbdpMask  = (1 << 4),
   .usbdpShift = 4,
-#else
-  /* Pins J21 and J19 */
-  /* PTD5 */
-  .usbdpIAddr = &FGPIOD->PDIR,
-  .usbdpSAddr = &FGPIOD->PSOR,
-  .usbdpCAddr = &FGPIOD->PCOR,
-  .usbdpDAddr = &FGPIOD->PDDR,
-  .usbdpMask  = (1 << 5),
-  .usbdpShift = 5,
-
-  /* PTD6 */
-  .usbdnIAddr = &FGPIOD->PDIR,
-  .usbdnSAddr = &FGPIOD->PSOR,
-  .usbdnCAddr = &FGPIOD->PCOR,
-  .usbdnDAddr = &FGPIOD->PDDR,
-  .usbdnMask  = (1 << 6),
-  .usbdnShift = 6,
-#endif
-};
-
-static struct USBPHY testWriteUsbPhy = {
-  /* PTE0 */
-  .usbdpIAddr = &FGPIOE->PDIR,
-  .usbdpSAddr = &FGPIOE->PSOR,
-  .usbdpCAddr = &FGPIOE->PCOR,
-  .usbdpDAddr = &FGPIOE->PDDR,
-  .usbdpMask = (1 << 0),
-  .usbdpShift = 0,
-
-  /* PTE1 */
-  .usbdnIAddr = &FGPIOE->PDIR,
-  .usbdnSAddr = &FGPIOE->PSOR,
-  .usbdnCAddr = &FGPIOE->PCOR,
-  .usbdnDAddr = &FGPIOE->PDDR,
-  .usbdnMask = (1 << 1),
-  .usbdnShift = 1,
 };
 
 int usbPhyInitialized(struct USBPHY *phy) {
@@ -88,36 +40,41 @@ static void usbCaptureI(struct USBPHY *phy) {
   samples = (uint8_t *)phy->read_queue[phy->read_queue_head];
 
   ret = usbPhyReadI(phy, samples);
+  if (ret <= 0)
+    goto out;
 
-  if (ret == USB_DIP_IN) {
+  /* Save the byte counter for later inspection */
+  samples[11] = ret;
+
+  if (samples[0] == USB_PID_IN) {
     if (!phy->queued_size) {
       uint8_t pkt[] = {USB_PID_NAK};
       usbPhyWriteI(phy, pkt, sizeof(pkt));
       goto out;
     }
 
-    phy->read_queue_head++;
+    phy->read_queue_head = (phy->read_queue_head + 1) & PHY_READ_QUEUE_MASK;
     usbPhyWriteI(phy, phy->queued_data, phy->queued_size);
     goto out;
   }
-  else if (ret == USB_DIP_SETUP) {
-    phy->read_queue_head++;
+  else if (samples[0] == USB_PID_SETUP) {
+    phy->read_queue_head = (phy->read_queue_head + 1) & PHY_READ_QUEUE_MASK;
     goto out;
   }
-  else if (ret == USB_DIP_OUT) {
-    phy->read_queue_head++;
+  else if (samples[0] == USB_PID_OUT) {
+    phy->read_queue_head = (phy->read_queue_head + 1) & PHY_READ_QUEUE_MASK;
     goto out;
   }
-  else if (ret == USB_DIP_ACK) {
+  else if (samples[0] == USB_PID_ACK) {
     /* Allow the next byte to be sent */
     phy->queued_size = 0;
     usbMacTransferSuccess(phy->mac);
-    phy->read_queue_head++;
+    phy->read_queue_head = (phy->read_queue_head + 1) & PHY_READ_QUEUE_MASK;
     goto out;
   }
 
-  else if ((ret == USB_DIP_DATA0) || (ret == USB_DIP_DATA1)) {
-    phy->read_queue_head++;
+  else if ((samples[0] == USB_PID_DATA0) || (samples[0] == USB_PID_DATA1)) {
+    phy->read_queue_head = (phy->read_queue_head + 1) & PHY_READ_QUEUE_MASK;
     uint8_t pkt[] = {USB_PID_ACK};
     usbPhyWriteI(phy, pkt, sizeof(pkt));
     goto out;
@@ -155,6 +112,25 @@ int usbPhyWritePrepare(struct USBPHY *phy, const void *buffer, int size) {
 }
 
 
+#if defined(ENABLE_TEST_WRITE)
+static struct USBPHY testWriteUsbPhy = {
+  /* PTE0 */
+  .usbdpIAddr = &FGPIOE->PDIR,
+  .usbdpSAddr = &FGPIOE->PSOR,
+  .usbdpCAddr = &FGPIOE->PCOR,
+  .usbdpDAddr = &FGPIOE->PDDR,
+  .usbdpMask = (1 << 0),
+  .usbdpShift = 0,
+
+  /* PTE1 */
+  .usbdnIAddr = &FGPIOE->PDIR,
+  .usbdnSAddr = &FGPIOE->PSOR,
+  .usbdnCAddr = &FGPIOE->PCOR,
+  .usbdnDAddr = &FGPIOE->PDDR,
+  .usbdnMask = (1 << 1),
+  .usbdnShift = 1,
+};
+
 void usbPhyWriteTest(struct USBPHY *phy) {
 
   uint8_t buffer[] = {
@@ -183,66 +159,28 @@ void usbPhyWriteTest(struct USBPHY *phy) {
   }
 }
 
-#ifdef TEST_PHY
-static int usb_test_ret;
-static uint32_t usb_test_samples[3];
-static uint8_t usb_test_samples_fixed[12];
-static const uint8_t chk_tbl[] = {0xc3, 0x80, 0x6, 0x0, 0x2, 0x0, 0x0, 0xff, 0x0, 0xe9, 0xa4, 0x0};
-int phy_success = 0;
-int phy_failures = 0;
+struct USBPHY *usbPhyTestPhy(void) {
+
+  return &testWriteUsbPhy;
+}
+#else /* defined(ENABLE_TEST_WRITE) */
+
+struct USBPHY *usbPhyTestPhy(void) {
+
+  return NULL;
+}
 #endif
+
 void usbPhyWorker(struct USBPHY *phy) {
-#ifdef TEST_PHY
-  uint8_t *in_ptr = (uint8_t *)usb_test_samples;
-  int32_t data_left;
-  uint32_t data_copied;
-  int i;
-  memset(usb_test_samples, 0, sizeof(usb_test_samples));
-  usb_test_ret = usbPhyReadI(phy, usb_test_samples);
-  if (usb_test_ret == 0xc3) {
-
-    data_left = in_ptr[11] - 1;
-    data_copied = 0;
-
-    if (data_left > 0) {
-      phy_success++;
-      while (data_left >= 0)
-        usb_test_samples_fixed[data_copied++] = bit_reverse_table_256[in_ptr[data_left--]];
-
-      for (i = 0; i < sizeof(chk_tbl); i++) {
-        if (usb_test_samples_fixed[i] != chk_tbl[i]) {
-          phy_success--;
-          phy_failures++;
-          asm("bkpt #0");
-        }
-      }
-    }
-  }
-  return;
-#else
   while (phy->read_queue_tail != phy->read_queue_head) {
     uint8_t *in_ptr = (uint8_t *)phy->read_queue[phy->read_queue_tail];
-    uint8_t bytes[12];
-    int32_t data_left;
-    uint32_t data_copied;
+    int count = in_ptr[11];
 
-    data_left = in_ptr[11] - 1;
-    data_copied = 0;
+    usbMacProcess(phy->mac, in_ptr, count);
 
-    if (data_left > 0) {
-      while (data_left >= 0)
-        bytes[data_copied++] = bit_reverse_table_256[in_ptr[data_left--]];
-      usbMacProcess(phy->mac, bytes, data_copied);
-    }
-    else if (data_left == 0) {
-      bytes[0] = bit_reverse_table_256[in_ptr[0]];
-      usbMacProcess(phy->mac, bytes, 1);
-    }
-
-    // Finally, move on to the next packet
-    phy->read_queue_tail++;
+    // Advance to the next packet
+    phy->read_queue_tail = (phy->read_queue_tail + 1) & PHY_READ_QUEUE_MASK;
   }
-#endif
   return;
 }
 
@@ -289,11 +227,6 @@ void usbPhyDrainIfNecessary(void) {
 struct USBPHY *usbPhyDefaultPhy(void) {
 
   return &defaultUsbPhy;
-}
-
-struct USBPHY *usbPhyTestPhy(void) {
-
-  return &testWriteUsbPhy;
 }
 
 OSAL_IRQ_HANDLER(KINETIS_PORTA_IRQ_VECTOR) {

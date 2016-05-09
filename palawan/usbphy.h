@@ -1,13 +1,11 @@
 #ifndef __USB_PHY_H__
 #define __USB_PHY_H__
 
+#define PHY_READ_QUEUE_SIZE 16
+#define PHY_READ_QUEUE_MASK (PHY_READ_QUEUE_SIZE - 1)
+
 struct USBMAC;
 
-/* Make sure this struct is not in flash.  Reads from flash are non-
- * -deterministic, and can have a variable amount of delay.  Also, make
- * sure it's not declared "const", as the "spSave" field is written by
- * the reader code.
- */
 struct USBPHY {
 
   struct USBMAC *mac;     /* Pointer to the associated MAC */
@@ -39,9 +37,11 @@ struct USBPHY {
   event_source_t data_available;
 #endif
 
-  uint32_t read_queue[256][3];
   uint8_t read_queue_head;
   uint8_t read_queue_tail;
+
+  /* pkt_size is cached in read_queue[x][11] */
+  uint8_t read_queue[PHY_READ_QUEUE_SIZE][12];
 } __attribute__((packed));
 
 int usbPhyResetStatistics(struct USBPHY *phy);

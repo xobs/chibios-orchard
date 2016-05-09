@@ -30,9 +30,6 @@ struct USBPHY {
   uint32_t usbdpMask;
   uint32_t usbdnMask;
 
-  uint32_t spSave;  /* The stack pointer is stored here during reading */
-  uint32_t bufSave; /* The output buffer is stored here during reading */
-
   const void *queued_data;
   uint32_t queued_size;
 
@@ -50,7 +47,7 @@ struct USBPHY {
 int usbPhyResetStatistics(struct USBPHY *phy);
 
 void usbPhyInit(struct USBPHY *phy, struct USBMAC *mac);
-int usbPhyReadI(const struct USBPHY *phy, uint32_t samples[3]);
+int usbPhyReadI(const struct USBPHY *phy, uint8_t samples[11]);
 void usbPhyWriteI(const struct USBPHY *phy, const void *buffer, uint32_t count);
 void usbPhyWriteTestPattern(const struct USBPHY *phy);
 void usbPhyWriteTest(struct USBPHY *phy);

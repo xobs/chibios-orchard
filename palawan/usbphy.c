@@ -87,7 +87,7 @@ static void usbCaptureI(struct USBPHY *phy) {
 
   samples = (uint8_t *)phy->read_queue[phy->read_queue_head];
 
-  ret = usbPhyReadI(phy, (uint32_t *)samples);
+  ret = usbPhyReadI(phy, samples);
 
   if (ret == USB_DIP_IN) {
     if (!phy->queued_size) {

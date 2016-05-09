@@ -1,17 +1,17 @@
 .section .ramtext /* Can also run out of .section .ramtext */
 //.section .text    /* Can also run out of .section .ramtext */
 
-.cpu    cortex-m0
+.cpu    cortex-m0plus
 .fpu    softvfp
 
 #if 0
   /***************************************************************************
    * USB PHY low-level code
-   * 
+   *
    * Exports the following functions:
    *
-   *    int usbPhyReadI(USBPHY *phy, uint8_t buffer[11], uint32_t scratch[3])
-   *    void usbPhyWriteI(USBPHY *phy, uint8_t buffer[11], uint32_t count)
+   *    int usbPhyReadI(USBPhy *phy, uint8_t buffer[11], uint32_t scratch[3])
+   *    void usbPhyWriteI(USBPhy *phy, uint8_t buffer[11], uint32_t count)
    *
    * Interrupts are disabled during this code, since it is time-critical.
    * Note that as a Kinetis "feature", jumps of more than 48 bytes can
@@ -60,9 +60,6 @@
 .equ dpMask,0x30
 .equ dnMask,0x34
 
-.equ spSave,0x38
-.equ bufSave,0x3c
-
   /*
    *
    * Each USB bit takes about 666 nS, which at a 48 MHz clock rate gives us
@@ -103,92 +100,92 @@
    *
    */
 
-rusbphy  .req sp  /* Pointer to the USBPHY struct, described above */
-rusmask  .req r0  /* Unstuff Mask (constant 0b111111) */
 rretval  .req r0  /* Return value (at the end) */
-routptr  .req r1  /* Outgoing sample buffer (pushed to stack) */
 
-rone     .req r1  /* The value 1 */
-rreg     .req r2  /* Register to sample pin */
-rmash    .req r3  /* Mask/shift to isolate required pin */
+rusbphy  .req r0  /* Pointer to the USBPHY struct (stored on stack) */
+rscratch .req r0  /* General-purpose scratch register (after premable) */
+routptr  .req r1  /* Outgoing sample buffer */
+
+rone     .req r2  /* The value 1 */
+rreg     .req r3  /* Register to sample pin */
 rval     .req r4  /* Currently-sampled value */
+rmash    .req r5  /* Mask/shift to isolate required pin */
 
-rsample1 .req r5  /* Most recent 32-bits */
-rsample2 .req r6  /* Next 32-bits */
-rsample3 .req r7  /* Remaining 24-bits */
+rsample  .req r6  /* Most recent byte */
+rcounter .req r7  /* Number of bytes sampled */
 
 rlastval .req r8  /* What value was the last pin? */
-rcounter .req r9
-runstuff .req r10
+runstuff .req r9  /* Log of the last six bits, for unstuffing */
 
-rdpiaddr .req r11
-rdniaddr .req r12
+rdpshift .req r10 /* Shift amount for D+ */
+rdpiaddr .req r11 /* Pointer to D+ sample address */
+rdniaddr .req r12 /* Pointer to D- sample address */
 
+/* Read Stack:
+ * 0: dnMask
+ * 4: rusbphy (currently unused)
+ */
+.equ rsDnMask,0x00
+.equ rsUsbPhy,0x04
 
 .func usbPhyReadI
 .global usbPhyReadI
 
-usb_phy_read_se0:
-  ldr r2, [rusbphy, #spSave]
-  mov sp, r2
-
-  pop {r2-r5}
+usb_phy_read__se0:
+  add sp, #12
+  pop {r2-r6}
   mov r8, r2
   mov r9, r3
   mov r10, r4
   mov r11, r5
+  mov r12, r6
 
-  mov r0, #0
-  sub r0, r0, #4
-  pop {r4,r5,r6,r7,pc}
+  mov rretval, #0
+  sub rretval, #4                   // Return -4
+  pop {r2-r7,pc}
 
-/*int */usbPhyReadI/*(const USBPHY *phy, uint8_t samples[12])*/:
-  push {r4,r5,r6,r7,lr}
+/*int */usbPhyReadI/*(const USBPHY *phy, uint8_t samples[11])*/:
+  push {r2-r7,lr}
   mov r2, r8
   mov r3, r9
   mov r4, r10
   mov r5, r11
-  push {r2-r5}                      // Save high registers
-
-  // We need an extra lo register for the unstuff pattern #0b111111, but
-  // we're all out.  As a complete and total hack, re-use the stack pointer
-  // to index into the USBPHY struct.
-  // This means that we can't push anything onto the stack, nor can we call
-  // any functions that do.
-  mov r2, sp
-  str r2, [r0, #spSave]
-  str routptr, [r0, #bufSave]
-  mov rusbphy, r0
+  mov r6, r12
+  push {r2-r6}                      // Save high registers
+  sub sp, #12
 
   ldr rreg, [rusbphy, #dnIAddr]     // Grab the address for the data input reg.
   ldr rmash, [rusbphy, #dnMask]     // Grab the mask for the bit.
 
-  ldr rsample1, [rusbphy, #dpIAddr] // Also grab D+ address
-  ldr rsample2, [rusbphy, #dpMask]  // And D+ mask
+  str rusbphy, [sp, #rsUsbPhy]      // Save the USBPHY on the stack.
+  str rmash, [sp, #rsDnMask]        // Save it on the stack for later.
+
+  ldr rsample, [rusbphy, #dpIAddr]  // Also grab D+ address
+  ldr rcounter, [rusbphy, #dpMask]  // And D+ mask
 
   /* Wait for the line to flip */
   ldr rval, [rreg]                  // Sample D-, to watch for it flipping
-  ldr rsample3, [rsample1]          // Sample D- at the same time
-  and rval, rval, rmash             // Mask off the interesting bit
+  ldr rone, [rsample]               // Sample D+ at the same time
+  and rval, rmash                   // Mask off the interesting bit
   mov rlastval, rval                // Save the bit for use in looking for sync
 
   /* Check to see if it's SE0, in which case this is a keepalive pkt */
-  and rsample3, rsample2            // Mask off the interesting bit
-  add rsample3, rval                // Combine D+ and D-.
-  beq usb_phy_read_se0              // Exit if SE0 condition (both are 0).
+  and rone, rcounter                // Mask off the interesting bit
+  add rone, rval                    // Combine D+ and D-.
+  beq usb_phy_read__se0             // Exit if SE0 condition (both are 0).
 
   // The loop is 4 cycles on a failure.  One
   // pulse is 32 cycles.  Therefore, loop up
   // to 8 times before giving up.
 .rept 8
   ldr rval, [rreg]                  // Sample USBDP
-  and rval, rval, rmash             // Mask off the interesting bit
+  and rval, rmash                   // Mask off the interesting bit
   cmp rval, rlastval                // Wait for it to change
-  bne usb_phy_read_sync_wait        // When it changes, go wait for sync pulse
+  bne usb_phy_read__sync_wait       // When it changes, go wait for sync pulse
 .endr
-  b usb_phy_read_timeout            // It never changed, so return "timeout".
+  b usb_phy_read__timeout           // It never changed, so return "timeout".
 
-usb_phy_read_sync_wait:
+usb_phy_read__sync_wait:
   // Move us away from the start of the pulse, to avoid transition errors.
   bl usb_phy_wait_5_cycles
 
@@ -196,31 +193,30 @@ usb_phy_read_sync_wait:
   // repeats itself.  This is the "KK" in the KJKJKJKK training sequence.
 .rept 7
   ldr rval, [rreg]                    // Sample USBDP
-  and rval, rval, rmash               // Mask off the interesting bit
+  and rval, rmash                     // Mask off the interesting bit
   cmp rlastval, rval
-  beq start_reading_usb
+  beq usb_phy_read__start_reading_usb
   mov rlastval, rval
   bl usb_phy_wait_27_cycles
 .endr
-  b usb_phy_sync_timeout
+  b usb_phy_read__sync_timeout
 
   /* We're synced to the middle of a pulse, and the clock sync / start-of-
    * -frame has been found.  Real packet data follows.
    */
-start_reading_usb:
+usb_phy_read__start_reading_usb:
 
   /* Clear out the register shift-chain */
-  mov rsample1, #0
-  mov rsample2, #0
-  mov rsample3, #0
-  mov rcounter, rsample1
-  mov r0, #0b11
-  mov runstuff, r0                  // Load 0b11 into unstuff reg, as the header
+  mov rsample, #0                   // Reset the sample byte value.
+  mov rcounter, #0                  // Reset the "bits" counter.
+
+  mov rval, #0b11
+  mov runstuff, rval                // Load 0b11 into unstuff reg, as the header
                                     // ends with the pattern KK, which starts
                                     // a run of two.
-  mov rusmask, #0b111111            // Unstuff mask
+
   mov rone, #1                      // Actually load the value '1' into the reg.
-  // 8
+  // ?
 
   /* Adjust rlastval so that it's in the correct position -- we skip doing
      this above since we're only interested in the value changing, not in
@@ -230,8 +226,8 @@ start_reading_usb:
    */
   mov rval, rlastval
   ldr rmash, [rusbphy, #dpShift]
-  ror rval, rval, rmash
-  and rval, rval, rone
+  ror rval, rmash
+  and rval, rone
   mov rlastval, rval
   // 6
 
@@ -239,66 +235,89 @@ start_reading_usb:
   mov rdpiaddr, rreg                  // to save one cycle.
   ldr rreg, [rusbphy, #dnIAddr]       // Cache the address of the D- input bank
   mov rdniaddr, rreg                  // to save another cycle.
-  // 6
+  ldr rreg, [rusbphy, #dpShift]       // Cache the D+ shift, too.
+  mov rdpshift, rreg
+  // 9
 
-usb_phy_read_get_usb_bit:
+usb_phy_read__get_usb_bit:
   mov rval, rdpiaddr                  // Get the address of the D+ input bank.
   mov rreg, rdniaddr                  // Get the address of the D+ input bank.
   ldr rval, [rval]                    // Actually sample D+
   ldr rreg, [rreg]                    // Also sample D-
 
-  ldr rmash, [rusbphy, #dpShift]      // Get the mask of the D+ bit
-  ror rval, rval, rmash               // Rotate the value down to bit 1.
-  and rval, rval, rone                // Mask off everything else.
-  // 8
+  mov rmash, rdpshift                 // Get the shift of the D+ bit
+  ror rval, rmash                     // Rotate the value down to bit 1.
+  and rval, rone                      // Mask off everything else.
+  // 7
 
+  /* xor this bit with the last bit and invert it, in order to get
+   * the logical value */
+  mov rmash, rlastval                 // Load up the previous bit
+  mov rlastval, rval                  // Save the current bit for the next loop.
+  eor rmash, rval                     // Check to see if the state has changed.
+  mvn rmash, rmash                    // Invert, as 1 ^ 1 or 0 ^ 0 should be 1.
+  and rmash, rone                     // Mask off everything but the last bit.
+
+  orr rsample, rmash                  // Append the value to the sample.
+  ror rsample, rone                   // Move it to the top of the buffer.
+
+  add runstuff, runstuff              // Shift the "unstuff" value up by 1.
+  add runstuff, rmash                 // "or" in the one-bit rval to the bottom.
+
+  // 9
+
+  // [16 total]
+
+  /* If we've completed a byte, the rcounter will mask to 0.
+   * If the byte is done, advance.
+   * If the byte continues, check for SE0.
+   */
+  add rcounter, rone                  // Increment the total-bit counter.
+  mov rscratch, #7                    // Prepare to mask by 0x7
+  tst rcounter, rscratch              // Perform the mask
+  beq usb_phy_read__advance_byte      // If the result is 0, advance the byte.
+  // 4 (or 5, if branch taken)
+
+  // The result is NOT 0, so see if it's an SE0.
+usb_phy_read__check_se0:
   // Check for SE0
-  ldr rmash, [rusbphy, #dnMask]
-  and rreg, rreg, rmash
-  add rreg, rreg, rval                // An end-of-frame is indicated by two
+  ldr rscratch, [sp, #rsDnMask]
+  and rreg, rscratch
+  add rreg, rval                      // An end-of-frame is indicated by two
                                       // frames of SE0.  If this is the case,
                                       // then the result of adding these
                                       // together will result in 0.
-  beq usb_phy_read_exit               // Exit if so.
+  bne usb_phy_read__check_unstuff
+  b usb_phy_read__exit                // Exit if so.
+  // 6 (if not SE0)
+
+usb_phy_read__advance_byte:
+  lsr rsample, #24                    // Rotate the sample down to the byte list
+  strb rsample, [routptr]             // Save the value to the out buffer.
+  add routptr, rone                   // Advance the out pointer.
+  mov rsample, #0                     // Reset sample accumulator.
   // 5
-
-  mov rmash, rlastval
-  mov rlastval, rval
-  eor rval, rmash                     // Check to see if the state has changed.
-  mvn rval, rval                      // Invert, as 1 ^ 1 or 0 ^ 0 should be 1.
-  and rval, rval, rone                // Mask off everything but the last bit.
-
-  add runstuff, runstuff, runstuff    // Shift the "unstuff" value up by 1.
-  add runstuff, runstuff, rval        // "or" in the one-bit rval to the bottom.
-
-  lsr rval, rval, rone                // Shift the state into the carry bit
-  adc rsample1, rsample1, rsample1    // Propagate the carry bit up
-  adc rsample2, rsample2, rsample2    // Propagate the carry bit up
-  adc rsample3, rsample3, rsample3    // Propagate the carry bit up
-  // 11 [9]
-
-  /* Restore values, increase rcounter */
-  add rcounter, rcounter, rone
-  // 1
-
-  nop
-  nop
 
   // Figure out if we need to unstuff, or if we can just continue to the
   // next bit.
   // Six consecutive USB states will be followed by a dummy
   // state flip.  Ignore this.
+usb_phy_read__check_unstuff:
   mov rreg, runstuff
-  and rreg, rreg, rusmask
-  cmp rreg, rusmask
-  bne usb_phy_read_get_usb_bit
-  // 5 [0]
+  mov rval, #0b111111                 // Unstuff mask
+  and rreg, rval
+  cmp rreg, rval
+
+  /* Loop again */
+  bne usb_phy_read__get_usb_bit
+  // 2 (if branch taken, 1 if unstuffing needs to happen)
 
 usb_unstuff:
   nop                                 // We get here when the current bit has
                                       // one more clock cycle left.  Add a nop
                                       // just to make the cycle-counting easier.
-  /* --- New pulse starts here --- */
+
+  /* --- New "loop" starts here --- */
   // NOTE that we don't increment "rcounter" here.
   mov runstuff, rone                  // We're skipping over one bit, which
                                       // results in a new run of one.
@@ -311,92 +330,57 @@ usb_unstuff:
   mov rlastval, rreg                  // Save it back into a lo reg.
   // 4
 
-  mov rreg, rcounter                  // Move rcounter to a lo register
-  cmp rreg, #88                       // Check to see if it's > 88
-  bgt usb_phy_read_exit               // Exit if so
-  // 3
-
-  bl usb_phy_wait_20_cycles
-  b usb_phy_read_get_usb_bit
+  cmp rcounter, #88                   // Sanity check: see if we've read more
+                                      // than 88 bytes (11 bits), because we've
+                                      // got cycles to spare here.
+  bgt usb_phy_read__exit              // Exit if so
   // 2
 
-usb_phy_read_exit:
+  bl usb_phy_wait_23_cycles
+
+  b usb_phy_read__get_usb_bit
+  // 2
+
+usb_phy_read__exit:
   // a minimum of 10 cycles have elapsed since we got here
-  ldr routptr, [rusbphy, #bufSave]
-  ldr r2, [rusbphy, #spSave]
-  mov sp, r2
-  // 5
 
   /* Count the number of bytes read (rcounter / 8) */
   mov rretval, rcounter
   asr rretval, #3                 // Return number of bytes (not bits) read.
   cmp rretval, #11                // Error out if we read more than 11 bytes.
-  bgt usb_phy_read_overflow_exit
+  bgt usb_phy_read__overflow_exit
   // 4
 
-  str rsample1, [routptr, #0]
-  str rsample2, [routptr, #4]
-  str rsample3, [routptr, #8]
-  strb r0, [routptr, #11]         // Save the count to samples[11]
-  // 8
-
-  mov r2, r0                      // Figure out which byte contains PID
-  sub r2, #1                      // It's the final byte
-  ldrb r0, [routptr, r2]          // Load the result into return value
-  // 4
-
-  pop {r2-r5}
+usb_phy_read__return:
+  add sp, #12                     // Restore stack.
+  pop {r2-r6}
   mov r8, r2
   mov r9, r3
   mov r10, r4
   mov r11, r5
-  // 11
+  mov r12, r6
+  // 13
 
-final_exit:
-  pop {r4-r7,pc}
+  pop {r2-r7,pc}
   // 8
 
   /* Read too many bits, return -2 */
-usb_phy_read_overflow_exit:
-  mov r1, #2
-  mov r0, #0
+usb_phy_read__overflow_exit:
+  mov rretval, #0
+  sub rretval, #2
+  b usb_phy_read__return
 
-  pop {r2-r5}
-  mov r8, r2
-  mov r9, r3
-  mov r10, r4
-  mov r11, r5
+  /* Unable to find pulse end, return -3 */
+usb_phy_read__sync_timeout:
+  mov rretval, #0
+  sub rretval, #3
+  b usb_phy_read__return
 
-  sub r0, r0, r1
-  pop {r4,r5,r6,r7,pc}
-
-usb_phy_sync_timeout:
-  ldr r2, [rusbphy, #spSave]
-  mov sp, r2
-
-  pop {r2-r5}
-  mov r8, r2
-  mov r9, r3
-  mov r10, r4
-  mov r11, r5
-
-  mov r0, #0
-  sub r0, r0, #3
-  pop {r4,r5,r6,r7,pc}
-
-usb_phy_read_timeout:
-  ldr r2, [rusbphy, #spSave]
-  mov sp, r2
-
-  pop {r2-r5}
-  mov r8, r2
-  mov r9, r3
-  mov r10, r4
-  mov r11, r5
-
-  mov r0, #0
-  sub r0, r0, #1
-  pop {r4,r5,r6,r7,pc}
+  /* Timeout while reading, return -1 */
+usb_phy_read__timeout:
+  mov rretval, #0
+  sub rretval, #1
+  b usb_phy_read__return
 
 .endfunc
 .type usbPhyReadI, %function
@@ -471,7 +455,7 @@ wstuff    .req r0   /* The last six bits, used for bit stuffing (reuses wusbphy)
    0: D- set (wDnSAddr)
    4: wusbphy
  */
-  
+
 /* Indexes off of internal data */
 .equ wDnSAddr,0x00      /* D- Set Addr */
 .equ wDnCAddr,0x04      /* D- Clear Addr */
@@ -604,7 +588,7 @@ usb_phy_write_k:
   mov wpaddr, wdpsetreg             // D+ set
   mov wnaddr, wdnclrreg
   b usb_phy_write_out
-  
+
 usb_phy_write_j:
   mov wpaddr, wdpclrreg             // D+ clr
   ldr wnaddr, [sp, #0]              // D- set
@@ -634,7 +618,7 @@ usb_phy_write_calculate_next_pkt:
   mvn wpkt, wpkt                    // Invert it to make the math work.
   mov wleft, #8                     // Reset "bits left" to 8.
   // 2
-  
+
   nop
   // 1
 
@@ -673,7 +657,7 @@ usb_phy_write_stuff_k:
   mov wpaddr, wdpsetreg             // D+ set
   mov wnaddr, wdnclrreg             // D- clr
   b usb_phy_write_stuff_out
-  
+
 usb_phy_write_stuff_j:
   mov wpaddr, wdpclrreg             // D+ clr
   ldr wnaddr, [sp, #0]              // D- set
@@ -692,12 +676,14 @@ usb_write_eof:
   bl usb_write_state_se0
 
   /* Set J-state, as required by the spec */
-#if 0
+#if 1
   bl usb_phy_wait_5_cycles
   mov wpaddr, wdpsetreg             // D+ set
   mov wnaddr, wdnclrreg             // D- clr
   str wpmask, [wpaddr]
   str wnmask, [wnaddr]
+#else
+#warning "Not setting J state (fix this before committing)"
 #endif
   /* Cheat a bit on the end-of-packet time, since the following
    * instructions take roughly 20 cycles before the lines reset.
